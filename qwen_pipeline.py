@@ -43,7 +43,7 @@ DEFAULT_LLM_MODEL = os.path.expanduser(
     "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx"
 )
 DEFAULT_VL_PROMPT = "请用中文提取这张图片里的关键信息，优先描述可见文字、界面元素、主体内容和上下文。"
-DEFAULT_TASK = "基于上面的图片解析结果，整理成一段清晰的中文说明。如果有文字信息，请总结重点。"
+DEFAULT_TASK = "请用一句简短的话描述整张图片的内容而不丢失重要细节，如果有识别到的人物，直接用人名替换来描述。"
 DEFAULT_SYSTEM = "你是一个严谨的中文助手。请基于提供的视觉解析结果完成任务，不要编造图片中不存在的细节。"
 
 
