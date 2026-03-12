@@ -89,8 +89,10 @@
 
       .results {
         padding: 18px;
-        display: grid;
+        display: flex;
+        flex-direction: column;
         gap: 16px;
+        align-items: stretch;
       }
 
       .section-title {
@@ -215,15 +217,85 @@
       }
 
       .preview {
+        display: block;
+        position: relative;
         overflow: hidden;
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        border-radius: 18px;
+      }
+
+      .preview.ready {
+        width: 100%;
+        align-self: stretch;
+        line-height: 0;
       }
 
       .preview img {
         display: block;
-        width: 100%;
+        width: auto;
+        max-width: 100%;
+        height: auto;
         max-height: 420px;
-        object-fit: cover;
-        border-radius: 18px;
+        object-fit: contain;
+        vertical-align: top;
+        border-radius: 0;
+        margin: 0 auto;
+      }
+
+      .preview .meta {
+        padding: 0;
+      }
+
+      .info-toggle {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.92);
+        color: var(--ink);
+        font-size: 0.95rem;
+        font-weight: 700;
+        z-index: 2;
+      }
+
+      .info-popover {
+        position: absolute;
+        top: 56px;
+        right: 12px;
+        width: min(560px, calc(100% - 24px));
+        max-height: 360px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 250, 241, 0.98);
+        box-shadow: 0 18px 40px rgba(29, 28, 26, 0.12);
+        overflow: hidden;
+        z-index: 2;
+      }
+
+      .info-popover[hidden] {
+        display: none;
+      }
+
+      .info-popover .section-title {
+        margin-bottom: 8px;
+      }
+
+      .info-popover pre {
+        margin: 0;
+        max-height: 290px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.9rem;
+        line-height: 1.55;
       }
 
       .metric-row {
@@ -287,6 +359,12 @@
           grid-template-columns: 1fr 1fr;
         }
       }
+
+      @media (min-width: 981px) {
+        .preview img {
+          max-height: 420px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -311,7 +389,7 @@
           <div class="inline">
             <label>
               缩图长边
-              <input id="resize-max-edge" name="resize_max_edge" type="number" min="256" max="4096" value="768" />
+              <input id="resize-max-edge" name="resize_max_edge" type="number" min="0" max="4096" value="768" />
             </label>
             <label>
               随机种子
@@ -378,7 +456,12 @@
         </form>
 
         <section class="panel results">
-          <div class="preview output">
+          <div class="preview">
+            <button id="info-toggle" class="info-toggle" type="button" aria-label="查看图片信息">i</button>
+            <div id="image-info-popover" class="info-popover" hidden>
+              <h2 class="section-title">Image Info</h2>
+              <pre id="image-info">等待结果</pre>
+            </div>
             <img id="preview" alt="预览图" hidden />
             <div id="placeholder" class="meta">上传图片后会在这里显示预览。</div>
           </div>
@@ -400,11 +483,6 @@
               <span class="label">LLM Infer</span>
               <span id="llm-time" class="value">-</span>
             </div>
-          </div>
-
-          <div class="output">
-            <h2 class="section-title">Image Info</h2>
-            <pre id="image-info">等待结果</pre>
           </div>
 
           <div class="output">
@@ -431,6 +509,8 @@
       const imageInput = document.getElementById("image");
       const preview = document.getElementById("preview");
       const placeholder = document.getElementById("placeholder");
+      const infoToggle = document.getElementById("info-toggle");
+      const imageInfoPopover = document.getElementById("image-info-popover");
       const statusNode = document.getElementById("status");
       const submitButton = document.getElementById("submit");
       const serviceStateNode = document.getElementById("service-state");
@@ -464,21 +544,36 @@
         });
       };
 
+      infoToggle.addEventListener("click", () => {
+        imageInfoPopover.hidden = !imageInfoPopover.hidden;
+      });
+
+      document.addEventListener("click", (event) => {
+        if (imageInfoPopover.hidden) {
+          return;
+        }
+        if (event.target === infoToggle || imageInfoPopover.contains(event.target)) {
+          return;
+        }
+        imageInfoPopover.hidden = true;
+      });
+
+      const getPreviewLongEdge = () => {
+        if (preview.naturalWidth && preview.naturalHeight) {
+          return Math.max(preview.naturalWidth, preview.naturalHeight);
+        }
+        return null;
+      };
+
       document.querySelectorAll("[data-preset]").forEach((button) => {
         button.addEventListener("click", () => {
           const preset = button.dataset.preset;
           if (preset === "fast") {
             resizeMaxEdgeInput.value = "768";
-            vlMaxTokensInput.value = "96";
-            llmMaxTokensInput.value = "2048";
           } else if (preset === "balanced") {
-            resizeMaxEdgeInput.value = "1024";
-            vlMaxTokensInput.value = "256";
-            llmMaxTokensInput.value = "4096";
-          } else if (preset === "detail") {
             resizeMaxEdgeInput.value = "1280";
-            vlMaxTokensInput.value = "1024";
-            llmMaxTokensInput.value = "8192";
+          } else if (preset === "detail") {
+            resizeMaxEdgeInput.value = String(getPreviewLongEdge() ?? 0);
           }
         });
       });
@@ -602,8 +697,10 @@
             URL.revokeObjectURL(currentPreviewUrl);
             currentPreviewUrl = null;
           }
+          preview.parentElement.classList.remove("ready");
           preview.hidden = true;
           placeholder.hidden = false;
+          imageInfoPopover.hidden = true;
           setText("image-info", "等待结果");
           return;
         }
@@ -612,8 +709,10 @@
         }
         currentPreviewUrl = URL.createObjectURL(file);
         preview.src = currentPreviewUrl;
+        preview.parentElement.classList.add("ready");
         preview.hidden = false;
         placeholder.hidden = true;
+        imageInfoPopover.hidden = true;
         setText("image-info", "等待结果");
       });
 
