@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import tempfile
 import threading
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from qwen_pipeline import (
@@ -74,6 +75,10 @@ def build_config(
         resize_max_edge=resize_max_edge,
         strip_thinking=strip_thinking,
     )
+
+
+def encode_sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def create_job() -> dict:
@@ -254,6 +259,72 @@ async def create_infer_job(
     )
     thread.start()
     return get_job(job["id"])
+
+
+@app.post("/api/stream")
+async def stream_infer(
+    image: UploadFile = File(...),
+    vl_prompt: str = Form(DEFAULT_VL_PROMPT),
+    task: str = Form(DEFAULT_TASK),
+    system: str = Form(DEFAULT_SYSTEM),
+    vl_max_tokens: int = Form(131072),
+    llm_max_tokens: int = Form(131072),
+    temperature: float = Form(0.2),
+    top_p: float = Form(0.9),
+    seed: int = Form(7),
+    resize_max_edge: int = Form(768),
+    strip_thinking: bool = Form(True),
+) -> StreamingResponse:
+    suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
+    contents = await image.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    config = build_config(
+        vl_prompt,
+        task,
+        system,
+        vl_max_tokens,
+        llm_max_tokens,
+        temperature,
+        top_p,
+        seed,
+        resize_max_edge,
+        strip_thinking,
+    )
+
+    temp_dir = tempfile.mkdtemp(prefix="qwen-stream-")
+    upload_path = Path(temp_dir) / f"input{suffix}"
+    upload_path.write_bytes(contents)
+
+    def event_stream():
+        try:
+            yield ": stream-start\n\n"
+            for item in pipeline.stream_infer(upload_path, config):
+                yield encode_sse(item["event"], item["data"])
+        except Exception as exc:  # noqa: BLE001
+            yield encode_sse(
+                "error",
+                {
+                    "message": str(exc),
+                },
+            )
+        finally:
+            try:
+                upload_path.unlink(missing_ok=True)
+                Path(temp_dir).rmdir()
+            except OSError:
+                pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/jobs/{job_id}")

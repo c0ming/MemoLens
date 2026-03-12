@@ -304,7 +304,7 @@
             <h2 class="section-title">Input</h2>
             <label>
               图片
-              <input id="image" name="image" type="file" accept="image/*" required />
+              <input id="image" name="image" type="file" accept="image/*,.heic,.heif" required />
             </label>
           </div>
 
@@ -333,7 +333,7 @@
               VL tokens
               <input id="vl-max-tokens" name="vl_max_tokens" type="number" min="16" max="262144" value="131072" />
             </label>
-            <label>
+            <label class="llm-only">
               LLM tokens
               <input id="llm-max-tokens" name="llm_max_tokens" type="number" min="32" max="262144" value="131072" />
             </label>
@@ -358,12 +358,12 @@
             <textarea name="vl_prompt">请用中文提取这张图片里的关键信息，优先描述可见文字、界面元素、主体内容和上下文。</textarea>
           </label>
 
-          <label>
+          <label class="llm-only">
             LLM Task
             <textarea name="task">基于上面的图片解析结果，整理成一段清晰的中文说明。如果有文字信息，请总结重点。</textarea>
           </label>
 
-          <label>
+          <label class="llm-only">
             System Prompt
             <textarea name="system">你是一个严谨的中文助手。请基于提供的视觉解析结果完成任务，不要编造图片中不存在的细节。</textarea>
           </label>
@@ -388,7 +388,7 @@
               <span class="label">VL Load</span>
               <span id="vl-load" class="value">-</span>
             </div>
-            <div class="metric">
+            <div id="llm-load-metric" class="metric llm-only">
               <span class="label">LLM Load</span>
               <span id="llm-load" class="value">-</span>
             </div>
@@ -396,7 +396,7 @@
               <span class="label">VL Infer</span>
               <span id="vl-time" class="value">-</span>
             </div>
-            <div class="metric">
+            <div id="llm-time-metric" class="metric llm-only">
               <span class="label">LLM Infer</span>
               <span id="llm-time" class="value">-</span>
             </div>
@@ -413,12 +413,12 @@
             <pre id="vl-output">等待结果</pre>
           </div>
 
-          <div class="output">
+          <div id="llm-output-panel" class="output llm-only">
             <h2 class="section-title">Qwen3.5 Output</h2>
             <pre id="llm-output">等待结果</pre>
           </div>
 
-          <div class="output">
+          <div id="reasoning-panel" class="output llm-only">
             <h2 class="section-title">Reasoning</h2>
             <pre id="reasoning-output">如果你保留了 reasoning，它会显示在这里。</pre>
           </div>
@@ -439,7 +439,9 @@
       const vlMaxTokensInput = document.getElementById("vl-max-tokens");
       const llmMaxTokensInput = document.getElementById("llm-max-tokens");
       const tokenLimitNoteNode = document.getElementById("token-limit-note");
-      let currentJobId = null;
+      const llmOnlyNodes = document.querySelectorAll(".llm-only");
+      let llmAvailable = true;
+      let currentPreviewUrl = null;
 
       const setText = (id, value) => {
         document.getElementById(id).textContent = value;
@@ -450,6 +452,16 @@
         setText("llm-load", timings.load_llm_model ? `${timings.load_llm_model}s` : "-");
         setText("vl-time", timings.vision_generate ? `${timings.vision_generate}s` : "-");
         setText("llm-time", timings.llm_generate ? `${timings.llm_generate}s` : "-");
+      };
+
+      const setLlmVisibility = (enabled) => {
+        llmAvailable = enabled;
+        llmOnlyNodes.forEach((node) => {
+          node.hidden = !enabled;
+          node.querySelectorAll("input, textarea").forEach((field) => {
+            field.disabled = !enabled;
+          });
+        });
       };
 
       document.querySelectorAll("[data-preset]").forEach((button) => {
@@ -471,85 +483,149 @@
         });
       });
 
-      function renderJob(job) {
-        const payload = job.result || job.partial || {};
+      function renderResult(payload = {}) {
         if (payload.timing_seconds) {
           setTimings(payload.timing_seconds);
         }
         if (payload.image_info) {
           setText("image-info", JSON.stringify(payload.image_info, null, 2));
         }
-        if (payload.vl_output) {
-          setText("vl-output", payload.vl_output);
+        if (payload.vl_output !== undefined && payload.vl_output !== null) {
+          setText("vl-output", payload.vl_output || "等待结果");
         }
-        if (payload.llm_output) {
-          setText("llm-output", payload.llm_output);
+        if (!llmAvailable) {
+          return;
         }
-        if (payload.llm_reasoning) {
-          setText("reasoning-output", payload.llm_reasoning);
-        } else if (job.state === "completed") {
-          setText("reasoning-output", "未返回 reasoning，或当前输出已被隐藏。");
-        } else if (job.state === "running_llm") {
-          setText("reasoning-output", "Qwen3.5 推理中...");
-        } else if (job.state === "vl_done" || job.state === "running_vl") {
-          setText("reasoning-output", "等待 Qwen3.5 开始...");
+        if (payload.llm_output !== undefined && payload.llm_output !== null) {
+          setText("llm-output", payload.llm_output || "等待结果");
+        }
+        if (payload.llm_reasoning !== undefined && payload.llm_reasoning !== null) {
+          setText("reasoning-output", payload.llm_reasoning || "未返回 reasoning，或当前输出已被隐藏。");
         }
       }
 
-      async function pollJob(jobId) {
-        while (currentJobId === jobId) {
-          const response = await fetch(`/api/jobs/${jobId}`);
-          const job = await response.json();
-          renderJob(job);
-          statusNode.textContent = job.message || "任务执行中。";
+      async function consumeSseStream(response) {
+        if (!response.body) {
+          throw new Error("流式响应不可用。");
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let sawComplete = false;
 
-          if (job.state === "completed") {
+        const handleEvent = (rawEvent) => {
+          const lines = rawEvent.split("\n");
+          let eventName = "message";
+          const dataLines = [];
+          lines.forEach((line) => {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          });
+          if (!dataLines.length) {
+            return;
+          }
+          const payload = JSON.parse(dataLines.join("\n"));
+          if (eventName === "status") {
+            statusNode.textContent = payload.message || "推理中。";
+            if (payload.timing_seconds) {
+              setTimings(payload.timing_seconds);
+            }
+            if (payload.image_info) {
+              setText("image-info", JSON.stringify(payload.image_info, null, 2));
+            }
+            if (payload.vl_output) {
+              setText("vl-output", payload.vl_output);
+            }
+            if (llmAvailable && payload.state === "running_llm") {
+              setText("reasoning-output", "Qwen3.5 推理中...");
+            }
+            return;
+          }
+          if (eventName === "image_info") {
+            statusNode.textContent = payload.message || "图片预处理完成。";
+            renderResult(payload);
+            return;
+          }
+          if (eventName === "vl_chunk") {
+            setText("vl-output", payload.accumulated_text || payload.text || "");
+            return;
+          }
+          if (eventName === "llm_chunk") {
+            if (!llmAvailable) {
+              return;
+            }
+            setText("llm-output", payload.llm_output || "等待回答...");
+            setText(
+              "reasoning-output",
+              payload.llm_reasoning || (payload.in_thinking ? "思考中..." : "未返回 reasoning，或当前输出已被隐藏。")
+            );
+            return;
+          }
+          if (eventName === "complete") {
+            renderResult(payload);
             statusNode.textContent = "推理完成。";
-            currentJobId = null;
-            submitButton.disabled = false;
-            loadStatus();
+            sawComplete = true;
             return;
           }
-
-          if (job.state === "error") {
-            statusNode.textContent = `推理失败: ${job.error || job.message || "未知错误"}`;
-            if (!job.partial?.vl_output) {
-              setText("vl-output", "推理失败");
-            }
-            if (!job.partial?.llm_output) {
-              setText("llm-output", "推理失败");
-              setText("reasoning-output", "推理失败");
-            }
-            currentJobId = null;
-            submitButton.disabled = false;
-            loadStatus();
-            return;
+          if (eventName === "error") {
+            throw new Error(payload.message || "未知错误");
           }
+        };
 
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            if (!sawComplete) {
+              throw new Error("推理流提前中断，服务端没有返回完成事件。");
+            }
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          parts.forEach((part) => {
+            if (part.startsWith(":")) {
+              return;
+            }
+            handleEvent(part);
+          });
         }
       }
 
       imageInput.addEventListener("change", () => {
         const file = imageInput.files[0];
         if (!file) {
+          if (currentPreviewUrl) {
+            URL.revokeObjectURL(currentPreviewUrl);
+            currentPreviewUrl = null;
+          }
           preview.hidden = true;
           placeholder.hidden = false;
+          setText("image-info", "等待结果");
           return;
         }
-        preview.src = URL.createObjectURL(file);
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+        currentPreviewUrl = URL.createObjectURL(file);
+        preview.src = currentPreviewUrl;
         preview.hidden = false;
         placeholder.hidden = true;
+        setText("image-info", "等待结果");
       });
 
       function renderServiceStatus(payload) {
         let state = "未连接";
         let className = "error";
+        setLlmVisibility(Boolean(payload.capabilities?.llm));
         if (payload.loading) {
           state = "模型加载中";
           className = "loading";
         } else if (payload.loaded) {
-          state = "服务就绪";
+          state = payload.capabilities?.llm ? "服务就绪" : "VL-only 就绪";
           className = "ready";
         } else if (payload.load_error) {
           state = "模型加载失败";
@@ -565,6 +641,8 @@
           notices: payload.notices || [],
           vl_model: payload.vl_model || null,
           llm_model: payload.llm_model || null,
+          capabilities: payload.capabilities || {},
+          mode: payload.mode || null,
           timing_seconds: payload.timing_seconds || {},
           supported_limits: payload.supported_limits || {},
         };
@@ -582,6 +660,8 @@
             `VL 理论上下文上限 ${limits.vl_context_tokens ?? "-"} tokens，` +
             `LLM 理论上下文上限 ${limits.llm_context_tokens ?? "-"} tokens。` +
             ` 实际可生成上限 = 上下文上限 - 当前输入 token。`;
+        } else if (!payload.capabilities?.llm) {
+          tokenLimitNoteNode.textContent = "当前只启用了 VL。LLM 未配置时不会显示相关参数和输出。";
         }
       }
 
@@ -591,7 +671,9 @@
           const payload = await response.json();
           renderServiceStatus(payload);
           statusNode.textContent = payload.loaded
-            ? "模型已加载，可以直接上传图片。"
+            ? payload.capabilities?.llm
+              ? "模型已加载，可以直接上传图片。"
+              : "VL 模型已加载，可以直接上传图片。LLM 未配置，页面只显示视觉结果。"
             : payload.loading
               ? "服务在线，模型正在加载。"
               : payload.load_error
@@ -617,29 +699,30 @@
         submitButton.disabled = true;
         statusNode.textContent = "正在推理，原始大图会明显更慢。";
         setText("vl-output", "推理中...");
-        setText("llm-output", "推理中...");
-        setText("reasoning-output", "推理中...");
+        if (llmAvailable) {
+          setText("llm-output", "推理中...");
+          setText("reasoning-output", "推理中...");
+        }
         setText("image-info", "推理中...");
 
         try {
-          const response = await fetch("/api/jobs", {
+          const response = await fetch("/api/stream", {
             method: "POST",
             body: data,
           });
-
-          const payload = await response.json();
           if (!response.ok) {
+            const payload = await response.json();
             throw new Error(payload.detail || "请求失败");
           }
-          currentJobId = payload.id;
-          statusNode.textContent = payload.message || "任务已提交。";
-          renderJob(payload);
-          await pollJob(payload.id);
+          await consumeSseStream(response);
+          loadStatus();
         } catch (error) {
           statusNode.textContent = `推理失败: ${error.message}`;
           setText("vl-output", "推理失败");
-          setText("llm-output", "推理失败");
-          setText("reasoning-output", "推理失败");
+          if (llmAvailable) {
+            setText("llm-output", "推理失败");
+            setText("reasoning-output", "推理失败");
+          }
           setText("image-info", "推理失败");
           loadStatus();
         } finally {

@@ -13,11 +13,13 @@ The current setup was verified with a local virtual environment:
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -U pip setuptools wheel
-.venv/bin/pip install "mlx-lm==0.31.0" "mlx-vlm==0.4.0" "transformers==5.3.0" pillow
+.venv/bin/pip install "mlx-lm==0.31.0" "mlx-vlm==0.4.0" "transformers==5.3.0" pillow pillow-heif
 .venv/bin/pip install torch torchvision python-multipart
 ```
 
 `torch` and `torchvision` are still needed because the `Qwen3-VL` processor initializes its video processor even if you only run image inference.
+
+`pillow-heif` is needed if you want to open `HEIC` / `HEIF` images. For iPhone `Live Photo`, this app currently only uses the still image asset and does not process the paired motion video.
 
 ## CLI
 
