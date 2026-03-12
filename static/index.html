@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Qwen MLX Demo</title>
+    <style>
+      :root {
+        --bg: #f0eadf;
+        --panel: rgba(255, 250, 241, 0.9);
+        --ink: #1d1c1a;
+        --muted: #6f675d;
+        --line: rgba(29, 28, 26, 0.14);
+        --accent: #0f766e;
+        --accent-2: #d97706;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", serif;
+        background:
+          radial-gradient(circle at top left, rgba(217, 119, 6, 0.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(15, 118, 110, 0.16), transparent 28%),
+          linear-gradient(180deg, #f7f2e8 0%, #efe7d7 100%);
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 18px 56px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 4rem);
+        line-height: 0.95;
+        font-weight: 700;
+      }
+
+      .subtitle {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        gap: 18px;
+      }
+
+      .grid > * {
+        min-width: 0;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 12px 40px rgba(68, 54, 38, 0.08);
+        backdrop-filter: blur(12px);
+      }
+
+      .controls {
+        padding: 18px;
+        position: sticky;
+        top: 18px;
+        align-self: start;
+      }
+
+      .results {
+        padding: 18px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .section-title {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 0.92rem;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      input[type="file"],
+      input[type="number"],
+      textarea {
+        width: 100%;
+        margin-top: 6px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.75);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 92px;
+        resize: vertical;
+      }
+
+      .inline {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .inline > * {
+        min-width: 0;
+      }
+
+      button {
+        width: 100%;
+        padding: 14px 18px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent) 0%, #115e59 100%);
+        color: white;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.65;
+        cursor: wait;
+      }
+
+      .preset-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .preset-btn {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--ink);
+      }
+
+      .status {
+        margin-top: 12px;
+        min-height: 20px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .service-box {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        overflow: hidden;
+      }
+
+      .service-state {
+        font-weight: 700;
+      }
+
+      .service-state.ready {
+        color: var(--accent);
+      }
+
+      .service-state.error {
+        color: #b91c1c;
+      }
+
+      .service-state.loading {
+        color: var(--accent-2);
+      }
+
+      #service-details {
+        margin: 8px 0 0;
+        max-width: 100%;
+        max-height: 220px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        line-height: 1.45;
+      }
+
+      .preview {
+        overflow: hidden;
+      }
+
+      .preview img {
+        display: block;
+        width: 100%;
+        max-height: 420px;
+        object-fit: cover;
+        border-radius: 18px;
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+
+      .metric {
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid var(--line);
+      }
+
+      .metric .label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .metric .value {
+        display: block;
+        margin-top: 6px;
+        font-size: 1.15rem;
+      }
+
+      .output {
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .output pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .controls {
+          position: static;
+        }
+
+        .metric-row {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="eyebrow">Local Qwen MLX</div>
+        <p class="subtitle">
+          这个页面直接调用本机 FastAPI 服务。模型常驻内存，图片默认先缩到较合理的边长，再执行视觉解析和文本整理。
+        </p>
+      </section>
+
+      <section class="grid">
+        <form id="infer-form" class="panel controls stack">
+          <div>
+            <h2 class="section-title">Input</h2>
+            <label>
+              图片
+              <input id="image" name="image" type="file" accept="image/*" required />
+            </label>
+          </div>
+
+          <div class="inline">
+            <label>
+              缩图长边
+              <input id="resize-max-edge" name="resize_max_edge" type="number" min="256" max="4096" value="768" />
+            </label>
+            <label>
+              随机种子
+              <input name="seed" type="number" min="0" value="7" />
+            </label>
+          </div>
+
+          <div class="preset-row">
+            <button class="preset-btn" type="button" data-preset="fast">速度优先</button>
+            <button class="preset-btn" type="button" data-preset="balanced">平衡</button>
+            <button class="preset-btn" type="button" data-preset="detail">细节优先</button>
+          </div>
+          <div class="meta">
+            对 VL 速度影响最大的是图片长边，其次才是 VL tokens。
+          </div>
+
+          <div class="inline">
+            <label>
+              VL tokens
+              <input id="vl-max-tokens" name="vl_max_tokens" type="number" min="16" max="262144" value="131072" />
+            </label>
+            <label>
+              LLM tokens
+              <input id="llm-max-tokens" name="llm_max_tokens" type="number" min="32" max="262144" value="131072" />
+            </label>
+          </div>
+          <div class="meta" id="token-limit-note">
+            当前显示的是生成上限。实际可生成 token 上限 = 模型上下文上限 - 当前输入 token。
+          </div>
+
+          <div class="inline">
+            <label>
+              Temperature
+              <input name="temperature" type="number" min="0" max="2" step="0.1" value="0.2" />
+            </label>
+            <label>
+              Top P
+              <input name="top_p" type="number" min="0" max="1" step="0.05" value="0.9" />
+            </label>
+          </div>
+
+          <label>
+            VL Prompt
+            <textarea name="vl_prompt">请用中文提取这张图片里的关键信息，优先描述可见文字、界面元素、主体内容和上下文。</textarea>
+          </label>
+
+          <label>
+            LLM Task
+            <textarea name="task">基于上面的图片解析结果，整理成一段清晰的中文说明。如果有文字信息，请总结重点。</textarea>
+          </label>
+
+          <label>
+            System Prompt
+            <textarea name="system">你是一个严谨的中文助手。请基于提供的视觉解析结果完成任务，不要编造图片中不存在的细节。</textarea>
+          </label>
+
+          <button id="submit" type="submit">开始推理</button>
+          <div id="status" class="status">服务启动后会在这里显示状态。</div>
+          <div class="service-box">
+            <h2 class="section-title">Service Status</h2>
+            <div id="service-state" class="service-state">等待连接</div>
+            <pre id="service-details" class="meta">等待状态</pre>
+          </div>
+        </form>
+
+        <section class="panel results">
+          <div class="preview output">
+            <img id="preview" alt="预览图" hidden />
+            <div id="placeholder" class="meta">上传图片后会在这里显示预览。</div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric">
+              <span class="label">VL Load</span>
+              <span id="vl-load" class="value">-</span>
+            </div>
+            <div class="metric">
+              <span class="label">LLM Load</span>
+              <span id="llm-load" class="value">-</span>
+            </div>
+            <div class="metric">
+              <span class="label">VL Infer</span>
+              <span id="vl-time" class="value">-</span>
+            </div>
+            <div class="metric">
+              <span class="label">LLM Infer</span>
+              <span id="llm-time" class="value">-</span>
+            </div>
+          </div>
+
+          <div class="output">
+            <h2 class="section-title">Image Info</h2>
+            <pre id="image-info">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <h2 class="section-title">VL Output</h2>
+            <div class="meta">如果这里像是被截断，通常优先检查 `VL tokens` 是否过小，而不是页面高度。</div>
+            <pre id="vl-output">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <h2 class="section-title">Qwen3.5 Output</h2>
+            <pre id="llm-output">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <h2 class="section-title">Reasoning</h2>
+            <pre id="reasoning-output">如果你保留了 reasoning，它会显示在这里。</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("infer-form");
+      const imageInput = document.getElementById("image");
+      const preview = document.getElementById("preview");
+      const placeholder = document.getElementById("placeholder");
+      const statusNode = document.getElementById("status");
+      const submitButton = document.getElementById("submit");
+      const serviceStateNode = document.getElementById("service-state");
+      const serviceDetailsNode = document.getElementById("service-details");
+      const resizeMaxEdgeInput = document.getElementById("resize-max-edge");
+      const vlMaxTokensInput = document.getElementById("vl-max-tokens");
+      const llmMaxTokensInput = document.getElementById("llm-max-tokens");
+      const tokenLimitNoteNode = document.getElementById("token-limit-note");
+      let currentJobId = null;
+
+      const setText = (id, value) => {
+        document.getElementById(id).textContent = value;
+      };
+
+      const setTimings = (timings = {}) => {
+        setText("vl-load", timings.load_vl_model ? `${timings.load_vl_model}s` : "-");
+        setText("llm-load", timings.load_llm_model ? `${timings.load_llm_model}s` : "-");
+        setText("vl-time", timings.vision_generate ? `${timings.vision_generate}s` : "-");
+        setText("llm-time", timings.llm_generate ? `${timings.llm_generate}s` : "-");
+      };
+
+      document.querySelectorAll("[data-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const preset = button.dataset.preset;
+          if (preset === "fast") {
+            resizeMaxEdgeInput.value = "768";
+            vlMaxTokensInput.value = "96";
+            llmMaxTokensInput.value = "2048";
+          } else if (preset === "balanced") {
+            resizeMaxEdgeInput.value = "1024";
+            vlMaxTokensInput.value = "256";
+            llmMaxTokensInput.value = "4096";
+          } else if (preset === "detail") {
+            resizeMaxEdgeInput.value = "1280";
+            vlMaxTokensInput.value = "1024";
+            llmMaxTokensInput.value = "8192";
+          }
+        });
+      });
+
+      function renderJob(job) {
+        const payload = job.result || job.partial || {};
+        if (payload.timing_seconds) {
+          setTimings(payload.timing_seconds);
+        }
+        if (payload.image_info) {
+          setText("image-info", JSON.stringify(payload.image_info, null, 2));
+        }
+        if (payload.vl_output) {
+          setText("vl-output", payload.vl_output);
+        }
+        if (payload.llm_output) {
+          setText("llm-output", payload.llm_output);
+        }
+        if (payload.llm_reasoning) {
+          setText("reasoning-output", payload.llm_reasoning);
+        } else if (job.state === "completed") {
+          setText("reasoning-output", "未返回 reasoning，或当前输出已被隐藏。");
+        } else if (job.state === "running_llm") {
+          setText("reasoning-output", "Qwen3.5 推理中...");
+        } else if (job.state === "vl_done" || job.state === "running_vl") {
+          setText("reasoning-output", "等待 Qwen3.5 开始...");
+        }
+      }
+
+      async function pollJob(jobId) {
+        while (currentJobId === jobId) {
+          const response = await fetch(`/api/jobs/${jobId}`);
+          const job = await response.json();
+          renderJob(job);
+          statusNode.textContent = job.message || "任务执行中。";
+
+          if (job.state === "completed") {
+            statusNode.textContent = "推理完成。";
+            currentJobId = null;
+            submitButton.disabled = false;
+            loadStatus();
+            return;
+          }
+
+          if (job.state === "error") {
+            statusNode.textContent = `推理失败: ${job.error || job.message || "未知错误"}`;
+            if (!job.partial?.vl_output) {
+              setText("vl-output", "推理失败");
+            }
+            if (!job.partial?.llm_output) {
+              setText("llm-output", "推理失败");
+              setText("reasoning-output", "推理失败");
+            }
+            currentJobId = null;
+            submitButton.disabled = false;
+            loadStatus();
+            return;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      imageInput.addEventListener("change", () => {
+        const file = imageInput.files[0];
+        if (!file) {
+          preview.hidden = true;
+          placeholder.hidden = false;
+          return;
+        }
+        preview.src = URL.createObjectURL(file);
+        preview.hidden = false;
+        placeholder.hidden = true;
+      });
+
+      function renderServiceStatus(payload) {
+        let state = "未连接";
+        let className = "error";
+        if (payload.loading) {
+          state = "模型加载中";
+          className = "loading";
+        } else if (payload.loaded) {
+          state = "服务就绪";
+          className = "ready";
+        } else if (payload.load_error) {
+          state = "模型加载失败";
+          className = "error";
+        }
+
+        serviceStateNode.textContent = state;
+        serviceStateNode.className = `service-state ${className}`;
+
+        const details = {
+          load_error: payload.load_error || null,
+          last_infer_error: payload.last_infer_error || null,
+          notices: payload.notices || [],
+          vl_model: payload.vl_model || null,
+          llm_model: payload.llm_model || null,
+          timing_seconds: payload.timing_seconds || {},
+          supported_limits: payload.supported_limits || {},
+        };
+        serviceDetailsNode.textContent = JSON.stringify(details, null, 2);
+
+        const limits = payload.supported_limits || {};
+        if (limits.vl_max_new_tokens_max) {
+          vlMaxTokensInput.max = String(limits.vl_max_new_tokens_max);
+        }
+        if (limits.llm_max_new_tokens_max) {
+          llmMaxTokensInput.max = String(limits.llm_max_new_tokens_max);
+        }
+        if (limits.vl_context_tokens || limits.llm_context_tokens) {
+          tokenLimitNoteNode.textContent =
+            `VL 理论上下文上限 ${limits.vl_context_tokens ?? "-"} tokens，` +
+            `LLM 理论上下文上限 ${limits.llm_context_tokens ?? "-"} tokens。` +
+            ` 实际可生成上限 = 上下文上限 - 当前输入 token。`;
+        }
+      }
+
+      async function loadStatus() {
+        try {
+          const response = await fetch("/api/status");
+          const payload = await response.json();
+          renderServiceStatus(payload);
+          statusNode.textContent = payload.loaded
+            ? "模型已加载，可以直接上传图片。"
+            : payload.loading
+              ? "服务在线，模型正在加载。"
+              : payload.load_error
+                ? `服务在线，但模型加载失败: ${payload.load_error}`
+                : "服务已启动，但模型尚未完成加载。";
+        } catch (error) {
+          statusNode.textContent = "无法连接到本地服务。";
+          serviceStateNode.textContent = "服务不可用";
+          serviceStateNode.className = "service-state error";
+          serviceDetailsNode.textContent = "无法连接到 /api/status";
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const file = imageInput.files[0];
+        if (!file) {
+          statusNode.textContent = "先选择一张图片。";
+          return;
+        }
+
+        const data = new FormData(form);
+        submitButton.disabled = true;
+        statusNode.textContent = "正在推理，原始大图会明显更慢。";
+        setText("vl-output", "推理中...");
+        setText("llm-output", "推理中...");
+        setText("reasoning-output", "推理中...");
+        setText("image-info", "推理中...");
+
+        try {
+          const response = await fetch("/api/jobs", {
+            method: "POST",
+            body: data,
+          });
+
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "请求失败");
+          }
+          currentJobId = payload.id;
+          statusNode.textContent = payload.message || "任务已提交。";
+          renderJob(payload);
+          await pollJob(payload.id);
+        } catch (error) {
+          statusNode.textContent = `推理失败: ${error.message}`;
+          setText("vl-output", "推理失败");
+          setText("llm-output", "推理失败");
+          setText("reasoning-output", "推理失败");
+          setText("image-info", "推理失败");
+          loadStatus();
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+
+      loadStatus();
+      setInterval(loadStatus, 5000);
+    </script>
+  </body>
+</html>
