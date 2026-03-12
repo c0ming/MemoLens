@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>人物 ID 管理</title>
+    <style>
+      :root {
+        --bg: #f0eadf;
+        --panel: rgba(255, 250, 241, 0.9);
+        --surface: rgba(255, 255, 255, 0.78);
+        --ink: #1d1c1a;
+        --muted: #6f675d;
+        --line: rgba(29, 28, 26, 0.14);
+        --accent: #0f766e;
+        --danger: #b91c1c;
+        --warn: #b45309;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", serif;
+        background:
+          radial-gradient(circle at top left, rgba(217, 119, 6, 0.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(15, 118, 110, 0.16), transparent 28%),
+          linear-gradient(180deg, #f7f2e8 0%, #efe7d7 100%);
+      }
+
+      .shell {
+        max-width: 1360px;
+        margin: 0 auto;
+        padding: 28px 18px 56px;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+      }
+
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 6px 0 0;
+        font-size: clamp(1.9rem, 4vw, 3.2rem);
+        line-height: 0.98;
+      }
+
+      .subtitle {
+        margin: 10px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+      }
+
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        min-width: 0;
+        padding: 18px;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: 0 12px 40px rgba(68, 54, 38, 0.08);
+        backdrop-filter: blur(12px);
+      }
+
+      .panel h2,
+      .box h2 {
+        margin: 0 0 12px;
+        font-size: 0.95rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .profiles {
+        max-height: calc(100vh - 260px);
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .profile-card {
+        width: 100%;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .profile-card.active {
+        border-color: rgba(15, 118, 110, 0.45);
+        box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.22);
+      }
+
+      .profile-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .profile-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+
+      .avatar {
+        width: 96px;
+        height: 96px;
+        border-radius: 999px;
+        overflow: hidden;
+        flex: 0 0 96px;
+        border: 1px solid var(--line);
+        background:
+          radial-gradient(circle at 35% 30%, rgba(15, 118, 110, 0.12), transparent 45%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(240, 234, 223, 0.9));
+      }
+
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+      }
+
+      .avatar-fallback {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        white-space: nowrap;
+      }
+
+      .pill.ready {
+        background: rgba(15, 118, 110, 0.12);
+        color: var(--accent);
+      }
+
+      .pill.pending {
+        background: rgba(180, 83, 9, 0.12);
+        color: var(--warn);
+      }
+
+      .meta-list {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .meta-primary {
+        color: var(--ink);
+        font-size: 0.98rem;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+
+      .box {
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .box > * + * {
+        margin-top: 12px;
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 16px;
+      }
+
+      .detail-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .status-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+
+      .identity-state {
+        display: grid;
+        gap: 6px;
+      }
+
+      .identity-state strong {
+        font-size: 1.1rem;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .stat {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .stat-label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin-bottom: 6px;
+      }
+
+      .stat-value {
+        font-size: 1rem;
+      }
+
+      label {
+        display: block;
+        font-size: 0.95rem;
+      }
+
+      input[type="text"], textarea, input[type="file"] {
+        width: 100%;
+        margin-top: 6px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 96px;
+        resize: vertical;
+      }
+
+      button {
+        padding: 12px 16px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent) 0%, #115e59 100%);
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: rgba(255, 255, 255, 0.85);
+        color: var(--ink);
+        border: 1px solid var(--line);
+      }
+
+      button.danger {
+        background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .action-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: nowrap;
+      }
+
+      .action-row > button {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .empty {
+        padding: 36px 18px;
+        border-radius: 18px;
+        border: 1px dashed var(--line);
+        text-align: center;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.46);
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      .sample-list {
+        display: grid;
+        gap: 10px;
+        max-height: 420px;
+        overflow: auto;
+      }
+
+      .sample-item {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.7);
+      }
+
+      .helper {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .create-box {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .create-box .push-bottom {
+        margin-top: auto;
+        padding-top: 12px;
+      }
+
+      .full-width {
+        width: 100%;
+      }
+
+      #status {
+        min-height: 20px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 1080px) {
+        .layout,
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .profiles {
+          max-height: none;
+        }
+
+        .summary-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Person IDs</div>
+          <h1>人物 ID 管理</h1>
+          <p class="subtitle">这里维护家庭成员档案。每个人都有稳定的 <code>person_id</code>，样本照会建立本地人脸向量，首页推理时先做匹配，再把已识别身份交给 VL 生成描述。</p>
+        </div>
+        <a class="nav-link" href="/">返回首页</a>
+      </section>
+
+      <section class="layout">
+        <aside class="panel stack">
+          <div class="box create-box">
+            <h2>新增人物</h2>
+            <label>
+              姓名
+              <input id="create-name" type="text" placeholder="例如：妈妈" />
+            </label>
+            <label>
+              备注
+              <textarea id="create-notes" placeholder="可写关系、常用称呼、补充说明"></textarea>
+            </label>
+            <div class="push-bottom">
+              <button id="create-person" class="full-width" type="button">新增人物档案</button>
+            </div>
+          </div>
+
+          <div class="box">
+            <h2>人物列表</h2>
+            <div id="profiles" class="profiles stack"></div>
+          </div>
+        </aside>
+
+        <section class="panel">
+          <div id="empty-state" class="empty">先从左侧选择一个人物，或者新建一个人物档案。</div>
+
+          <div id="detail" hidden>
+            <div class="detail-grid">
+              <section class="detail-stack">
+                <div class="box">
+                  <div class="status-hero">
+                    <div class="identity-state">
+                      <strong id="detail-name">未选择</strong>
+                      <div id="detail-person-id" class="profile-id"></div>
+                    </div>
+                    <span id="detail-pill" class="pill pending">未建立 ID</span>
+                  </div>
+
+                  <div class="summary-grid">
+                    <div class="stat">
+                      <span class="stat-label">有效样本</span>
+                      <span id="stat-samples" class="stat-value">0</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">最近建库</span>
+                      <span id="stat-last-built" class="stat-value">未建立</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">最近更新</span>
+                      <span id="stat-updated" class="stat-value">未更新</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="box">
+                  <h2>档案信息</h2>
+                  <label>
+                    姓名
+                    <input id="edit-name" type="text" />
+                  </label>
+                  <label>
+                    备注
+                    <textarea id="edit-notes" placeholder="可写关系、常用称呼、补充说明"></textarea>
+                  </label>
+                  <div class="action-row">
+                    <button id="save-person" type="button">保存档案信息</button>
+                    <button id="clear-samples" class="danger" type="button">清空样本记录</button>
+                    <button id="delete-person" class="danger" type="button">删除人物档案</button>
+                  </div>
+                </div>
+
+                <div class="box">
+                  <h2>建立人脸 ID</h2>
+                  <label>
+                    上传样本照片
+                    <input id="extract-images" type="file" accept="image/*,.heic,.heif" multiple />
+                  </label>
+                  <div id="selection-note" class="helper">建议一次上传 3 张以上清晰正脸，提高稳定性。</div>
+                  <div class="action-row">
+                    <button id="extract-features" type="button">上传并建立 ID</button>
+                  </div>
+                  <div class="helper">当前会为该人物聚合多张样本的人脸 embedding，旧样本记录会被新一轮构建结果覆盖。</div>
+                </div>
+              </section>
+
+              <section class="detail-stack">
+                <div class="box">
+                  <h2>ID 构建结果</h2>
+                  <pre id="feature-summary">等待结果</pre>
+                </div>
+
+                <div class="box">
+                  <h2>样本记录</h2>
+                  <div id="samples" class="sample-list">
+                    <div class="muted">还没有样本。</div>
+                  </div>
+                </div>
+
+                <div class="box">
+                  <h2>状态</h2>
+                  <div id="status">等待操作。</div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const profilesNode = document.getElementById("profiles");
+      const emptyStateNode = document.getElementById("empty-state");
+      const detailNode = document.getElementById("detail");
+      const statusNode = document.getElementById("status");
+      const featureSummaryNode = document.getElementById("feature-summary");
+      const samplesNode = document.getElementById("samples");
+      const createPersonButton = document.getElementById("create-person");
+      const savePersonButton = document.getElementById("save-person");
+      const clearSamplesButton = document.getElementById("clear-samples");
+      const deletePersonButton = document.getElementById("delete-person");
+      const extractFeaturesButton = document.getElementById("extract-features");
+      const createNameInput = document.getElementById("create-name");
+      const createNotesInput = document.getElementById("create-notes");
+      const editNameInput = document.getElementById("edit-name");
+      const editNotesInput = document.getElementById("edit-notes");
+      const extractImagesInput = document.getElementById("extract-images");
+      const selectionNoteNode = document.getElementById("selection-note");
+
+      const detailNameNode = document.getElementById("detail-name");
+      const detailPersonIdNode = document.getElementById("detail-person-id");
+      const detailPillNode = document.getElementById("detail-pill");
+      const statSamplesNode = document.getElementById("stat-samples");
+      const statLastBuiltNode = document.getElementById("stat-last-built");
+      const statUpdatedNode = document.getElementById("stat-updated");
+
+      let profiles = [];
+      let activeProfileId = null;
+
+      function setStatus(text) {
+        statusNode.textContent = text || "";
+      }
+
+      function activeProfile() {
+        return profiles.find((profile) => profile.id === activeProfileId) || null;
+      }
+
+      function formatTime(timestamp) {
+        if (!timestamp) {
+          return "未记录";
+        }
+        return new Date(timestamp * 1000).toLocaleString("zh-CN", { hour12: false });
+      }
+
+      function profileStatus(profile) {
+        if (profile.has_identity_embedding) {
+          return { label: "已建立 ID", className: "ready" };
+        }
+        return { label: "未建立 ID", className: "pending" };
+      }
+
+      function escapeHtml(value = "") {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function renderProfiles() {
+        profilesNode.innerHTML = "";
+        if (!profiles.length) {
+          profilesNode.innerHTML = '<div class="empty">还没有人物档案。</div>';
+          return;
+        }
+        profiles.forEach((profile) => {
+          const status = profileStatus(profile);
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = `profile-card${profile.id === activeProfileId ? " active" : ""}`;
+          const avatar = profile.preview_available
+            ? `<div class="avatar"><img src="/api/people/${profile.id}/preview?v=${Math.floor(profile.updated_at || 0)}" alt="" /></div>`
+            : `<div class="avatar"><div class="avatar-fallback">无图</div></div>`;
+          card.innerHTML = `
+            <div class="profile-top">
+              <div class="profile-head">
+                ${avatar}
+              </div>
+              <span class="pill ${status.className}">${status.label}</span>
+            </div>
+            <div class="meta-list">
+              <div class="meta-primary">${escapeHtml(profile.name)}（${escapeHtml(profile.person_id)}）</div>
+              <div>${escapeHtml(profile.notes || "无备注")}</div>
+              <div>有效样本：${profile.sample_count ?? 0}</div>
+              <div>更新于：${formatTime(profile.updated_at)}</div>
+            </div>
+          `;
+          card.addEventListener("click", () => {
+            activeProfileId = profile.id;
+            renderProfiles();
+            renderDetail();
+          });
+          profilesNode.appendChild(card);
+        });
+      }
+
+      function renderSamples(profile) {
+        samplesNode.innerHTML = "";
+        if (!profile?.samples?.length) {
+          samplesNode.innerHTML = '<div class="muted">还没有样本记录。</div>';
+          return;
+        }
+        profile.samples.forEach((sample) => {
+          const item = document.createElement("div");
+          item.className = "sample-item";
+          item.innerHTML = `
+            <strong>${escapeHtml(sample.original_name)}</strong>
+            <pre>${
+              sample.face_detected
+                ? `检测到人脸\nbbox=${JSON.stringify(sample.bbox)}\nembedding_dim=${sample.embedding_dim}`
+                : `未建立向量\n${escapeHtml(sample.error || "未检测到人脸")}`
+            }</pre>
+          `;
+          samplesNode.appendChild(item);
+        });
+      }
+
+      function renderDetail() {
+        const profile = activeProfile();
+        if (!profile) {
+          emptyStateNode.hidden = false;
+          detailNode.hidden = true;
+          featureSummaryNode.textContent = "等待结果";
+          renderSamples(null);
+          return;
+        }
+
+        const status = profileStatus(profile);
+        emptyStateNode.hidden = true;
+        detailNode.hidden = false;
+
+        detailNameNode.textContent = profile.name;
+        detailPersonIdNode.textContent = profile.person_id;
+        detailPillNode.textContent = status.label;
+        detailPillNode.className = `pill ${status.className}`;
+        statSamplesNode.textContent = String(profile.sample_count ?? 0);
+        statLastBuiltNode.textContent = profile.last_extracted_at ? formatTime(profile.last_extracted_at) : "未建立";
+        statUpdatedNode.textContent = formatTime(profile.updated_at);
+
+        editNameInput.value = profile.name || "";
+        editNotesInput.value = profile.notes || "";
+        featureSummaryNode.textContent = profile.feature_summary || "还没有建立过人脸 ID。";
+        renderSamples(profile);
+      }
+
+      async function loadProfiles(selectId = null) {
+        const response = await fetch("/api/people");
+        const payload = await response.json();
+        profiles = payload.profiles || [];
+        if (selectId) {
+          activeProfileId = selectId;
+        } else if (activeProfileId && profiles.some((profile) => profile.id === activeProfileId)) {
+          activeProfileId = activeProfileId;
+        } else {
+          activeProfileId = profiles[0]?.id || null;
+        }
+        renderProfiles();
+        renderDetail();
+      }
+
+      createPersonButton.addEventListener("click", async () => {
+        const name = createNameInput.value.trim();
+        const notes = createNotesInput.value.trim();
+        if (!name) {
+          setStatus("先填写人物姓名。");
+          return;
+        }
+        createPersonButton.disabled = true;
+        setStatus("正在创建人物档案...");
+        try {
+          const response = await fetch("/api/people", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, notes }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "创建失败");
+          }
+          createNameInput.value = "";
+          createNotesInput.value = "";
+          await loadProfiles(payload.id);
+          setStatus("人物档案已创建。");
+        } catch (error) {
+          setStatus(`创建失败: ${error.message}`);
+        } finally {
+          createPersonButton.disabled = false;
+        }
+      });
+
+      savePersonButton.addEventListener("click", async () => {
+        const profile = activeProfile();
+        if (!profile) {
+          return;
+        }
+        const name = editNameInput.value.trim();
+        const notes = editNotesInput.value.trim();
+        if (!name) {
+          setStatus("姓名不能为空。");
+          return;
+        }
+        savePersonButton.disabled = true;
+        setStatus("正在保存档案信息...");
+        try {
+          const response = await fetch(`/api/people/${profile.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, notes }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "保存失败");
+          }
+          await loadProfiles(profile.id);
+          setStatus("档案信息已保存。");
+        } catch (error) {
+          setStatus(`保存失败: ${error.message}`);
+        } finally {
+          savePersonButton.disabled = false;
+        }
+      });
+
+      deletePersonButton.addEventListener("click", async () => {
+        const profile = activeProfile();
+        if (!profile) {
+          return;
+        }
+        if (!window.confirm(`确认删除“${profile.name}”这个人物档案吗？此操作会删除档案、样本记录和预览头像，且无法恢复。`)) {
+          return;
+        }
+        deletePersonButton.disabled = true;
+        setStatus("正在删除人物档案...");
+        try {
+          const response = await fetch(`/api/people/${profile.id}`, { method: "DELETE" });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "删除失败");
+          }
+          activeProfileId = null;
+          await loadProfiles();
+          setStatus("人物档案已删除。");
+        } catch (error) {
+          setStatus(`删除失败: ${error.message}`);
+        } finally {
+          deletePersonButton.disabled = false;
+        }
+      });
+
+      clearSamplesButton.addEventListener("click", async () => {
+        const profile = activeProfile();
+        if (!profile) {
+          return;
+        }
+        if (!window.confirm(`确认清空“${profile.name}”的样本记录吗？这会删除已建立的人脸 ID、样本记录和预览头像，但会保留名字与备注。`)) {
+          return;
+        }
+        clearSamplesButton.disabled = true;
+        setStatus("正在清空样本记录...");
+        try {
+          const response = await fetch(`/api/people/${profile.id}/clear-samples`, {
+            method: "POST",
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "清空失败");
+          }
+          await loadProfiles(profile.id);
+          setStatus("样本记录已清空。");
+        } catch (error) {
+          setStatus(`清空失败: ${error.message}`);
+        } finally {
+          clearSamplesButton.disabled = false;
+        }
+      });
+
+      extractImagesInput.addEventListener("change", () => {
+        const count = extractImagesInput.files.length;
+        selectionNoteNode.textContent = count
+          ? `已选择 ${count} 张样本。建议至少 3 张清晰正脸。`
+          : "建议一次上传 3 张以上清晰正脸，提高稳定性。";
+      });
+
+      extractFeaturesButton.addEventListener("click", async () => {
+        const profile = activeProfile();
+        if (!profile) {
+          setStatus("先选择一个人物。");
+          return;
+        }
+        if (!extractImagesInput.files.length) {
+          setStatus("至少上传一张样本照片。");
+          return;
+        }
+        extractFeaturesButton.disabled = true;
+        setStatus("正在建立人物人脸 ID...");
+        const data = new FormData();
+        Array.from(extractImagesInput.files).forEach((file) => {
+          data.append("images", file);
+        });
+        try {
+          const response = await fetch(`/api/people/${profile.id}/extract`, {
+            method: "POST",
+            body: data,
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "建立失败");
+          }
+          extractImagesInput.value = "";
+          selectionNoteNode.textContent = "建议一次上传 3 张以上清晰正脸，提高稳定性。";
+          await loadProfiles(profile.id);
+          setStatus(`建库完成，当前有效样本 ${payload.profile?.sample_count ?? 0} 张。`);
+        } catch (error) {
+          setStatus(`建立失败: ${error.message}`);
+        } finally {
+          extractFeaturesButton.disabled = false;
+        }
+      });
+
+      loadProfiles().catch((error) => {
+        setStatus(`初始化失败: ${error.message}`);
+      });
+    </script>
+  </body>
+</html>

@@ -41,6 +41,14 @@
         margin-bottom: 22px;
       }
 
+      .hero-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
       .eyebrow {
         font-size: 12px;
         letter-spacing: 0.14em;
@@ -60,6 +68,27 @@
         margin: 0;
         color: var(--muted);
         font-size: 1rem;
+      }
+
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.8);
+        color: var(--ink);
+        text-decoration: none;
+        font-size: 0.92rem;
+      }
+
+      .nav-link.prominent {
+        width: 100%;
+        padding: 12px 16px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(15, 118, 110, 0.12) 0%, rgba(217, 119, 6, 0.12) 100%);
+        font-weight: 700;
       }
 
       .grid {
@@ -332,6 +361,31 @@
         background: rgba(255, 255, 255, 0.72);
       }
 
+      .output-header,
+      .popover-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .output-header .section-title,
+      .popover-header .section-title {
+        margin: 0;
+      }
+
+      .copy-btn {
+        width: auto;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        font-size: 0.82rem;
+        line-height: 1;
+      }
+
       .output pre {
         margin: 0;
         white-space: pre-wrap;
@@ -370,7 +424,10 @@
   <body>
     <main class="shell">
       <section class="hero">
-        <div class="eyebrow">Local Qwen MLX</div>
+        <div class="hero-bar">
+          <div class="eyebrow">Local Qwen MLX</div>
+          <a class="nav-link" href="/people">人物 ID 管理</a>
+        </div>
         <p class="subtitle">
           这个页面直接调用本机 FastAPI 服务。模型常驻内存，图片默认先缩到较合理的边长，再执行视觉解析和文本整理。
         </p>
@@ -378,6 +435,7 @@
 
       <section class="grid">
         <form id="infer-form" class="panel controls stack">
+          <a class="nav-link prominent" href="/people">进入人物 ID 管理</a>
           <div>
             <h2 class="section-title">Input</h2>
             <label>
@@ -459,7 +517,10 @@
           <div class="preview">
             <button id="info-toggle" class="info-toggle" type="button" aria-label="查看图片信息">i</button>
             <div id="image-info-popover" class="info-popover" hidden>
-              <h2 class="section-title">Image Info</h2>
+              <div class="popover-header">
+                <h2 class="section-title">Image Info</h2>
+                <button class="copy-btn" type="button" data-copy-target="image-info">复制</button>
+              </div>
               <pre id="image-info">等待结果</pre>
             </div>
             <img id="preview" alt="预览图" hidden />
@@ -486,18 +547,43 @@
           </div>
 
           <div class="output">
-            <h2 class="section-title">VL Output</h2>
+            <div class="output-header">
+              <h2 class="section-title">Identified People</h2>
+              <button class="copy-btn" type="button" data-copy-target="identified-people">复制</button>
+            </div>
+            <pre id="identified-people">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <div class="output-header">
+              <h2 class="section-title">Effective VL Prompt</h2>
+              <button class="copy-btn" type="button" data-copy-target="effective-vl-prompt">复制</button>
+            </div>
+            <pre id="effective-vl-prompt">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <div class="output-header">
+              <h2 class="section-title">VL Output</h2>
+              <button class="copy-btn" type="button" data-copy-target="vl-output">复制</button>
+            </div>
             <div class="meta">如果这里像是被截断，通常优先检查 `VL tokens` 是否过小，而不是页面高度。</div>
             <pre id="vl-output">等待结果</pre>
           </div>
 
           <div id="llm-output-panel" class="output llm-only">
-            <h2 class="section-title">Qwen3.5 Output</h2>
+            <div class="output-header">
+              <h2 class="section-title">Qwen3.5 Output</h2>
+              <button class="copy-btn" type="button" data-copy-target="llm-output">复制</button>
+            </div>
             <pre id="llm-output">等待结果</pre>
           </div>
 
           <div id="reasoning-panel" class="output llm-only">
-            <h2 class="section-title">Reasoning</h2>
+            <div class="output-header">
+              <h2 class="section-title">Reasoning</h2>
+              <button class="copy-btn" type="button" data-copy-target="reasoning-output">复制</button>
+            </div>
             <pre id="reasoning-output">如果你保留了 reasoning，它会显示在这里。</pre>
           </div>
         </section>
@@ -534,6 +620,18 @@
         setText("llm-time", timings.llm_generate ? `${timings.llm_generate}s` : "-");
       };
 
+      const resetInferenceView = () => {
+        setTimings();
+        setText("identified-people", "等待结果");
+        setText("effective-vl-prompt", "等待结果");
+        setText("vl-output", "等待结果");
+        setText("image-info", "等待结果");
+        if (llmAvailable) {
+          setText("llm-output", "等待结果");
+          setText("reasoning-output", "如果你保留了 reasoning，它会显示在这里。");
+        }
+      };
+
       const setLlmVisibility = (enabled) => {
         llmAvailable = enabled;
         llmOnlyNodes.forEach((node) => {
@@ -556,6 +654,27 @@
           return;
         }
         imageInfoPopover.hidden = true;
+      });
+
+      document.querySelectorAll("[data-copy-target]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const targetId = button.dataset.copyTarget;
+          const target = document.getElementById(targetId);
+          if (!target) {
+            return;
+          }
+          const text = target.textContent || "";
+          try {
+            await navigator.clipboard.writeText(text);
+            const original = button.textContent;
+            button.textContent = "已复制";
+            window.setTimeout(() => {
+              button.textContent = original;
+            }, 1200);
+          } catch (_error) {
+            statusNode.textContent = "复制失败，浏览器未允许剪贴板访问。";
+          }
+        });
       });
 
       const getPreviewLongEdge = () => {
@@ -584,6 +703,12 @@
         }
         if (payload.image_info) {
           setText("image-info", JSON.stringify(payload.image_info, null, 2));
+        }
+        if (payload.effective_vl_prompt !== undefined) {
+          setText("effective-vl-prompt", payload.effective_vl_prompt || "等待结果");
+        }
+        if (payload.identified_people !== undefined) {
+          setText("identified-people", JSON.stringify(payload.identified_people || [], null, 2));
         }
         if (payload.vl_output !== undefined && payload.vl_output !== null) {
           setText("vl-output", payload.vl_output || "等待结果");
@@ -644,6 +769,14 @@
             renderResult(payload);
             return;
           }
+          if (eventName === "identified_people") {
+            setText("identified-people", JSON.stringify(payload.identified_people || [], null, 2));
+            return;
+          }
+          if (eventName === "effective_vl_prompt") {
+            setText("effective-vl-prompt", payload.effective_vl_prompt || "等待结果");
+            return;
+          }
           if (eventName === "vl_chunk") {
             setText("vl-output", payload.accumulated_text || payload.text || "");
             return;
@@ -701,7 +834,7 @@
           preview.hidden = true;
           placeholder.hidden = false;
           imageInfoPopover.hidden = true;
-          setText("image-info", "等待结果");
+          resetInferenceView();
           return;
         }
         if (currentPreviewUrl) {
@@ -713,7 +846,8 @@
         preview.hidden = false;
         placeholder.hidden = true;
         imageInfoPopover.hidden = true;
-        setText("image-info", "等待结果");
+        resetInferenceView();
+        statusNode.textContent = "已选择新图片，等待推理。";
       });
 
       function renderServiceStatus(payload) {
@@ -798,6 +932,7 @@
         submitButton.disabled = true;
         statusNode.textContent = "正在推理，原始大图会明显更慢。";
         setText("vl-output", "推理中...");
+        setText("identified-people", "推理中...");
         if (llmAvailable) {
           setText("llm-output", "推理中...");
           setText("reasoning-output", "推理中...");
@@ -818,6 +953,7 @@
         } catch (error) {
           statusNode.textContent = `推理失败: ${error.message}`;
           setText("vl-output", "推理失败");
+          setText("identified-people", "推理失败");
           if (llmAvailable) {
             setText("llm-output", "推理失败");
             setText("reasoning-output", "推理失败");

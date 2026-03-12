@@ -715,6 +715,33 @@ class QwenPipeline:
 
         return dict(self._load_timings)
 
+    def load_vl_model(self) -> dict[str, float]:
+        if self.vl_loaded:
+            return dict(self._load_timings)
+
+        with self._load_lock:
+            if self.vl_loaded:
+                return dict(self._load_timings)
+            self._loading = True
+            self._last_error = None
+            try:
+                started = time.perf_counter()
+                self._vl_model, self._processor = vlm_load(
+                    str(self.vl_model_path),
+                    lazy=self.lazy,
+                )
+                self._load_timings["load_vl_model"] = round(
+                    time.perf_counter() - started,
+                    2,
+                )
+            except Exception as exc:
+                self._last_error = str(exc)
+                raise
+            finally:
+                self._loading = False
+
+        return dict(self._load_timings)
+
     def infer(self, image_path: str | Path, config: PipelineConfig | None = None) -> dict[str, Any]:
         return self._infer(image_path, config, progress_callback=None)
 
@@ -883,6 +910,62 @@ class QwenPipeline:
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         return self._infer(image_path, config, progress_callback=progress_callback)
+
+    def infer_vl_only(
+        self,
+        image_path: str | Path,
+        config: PipelineConfig | None = None,
+    ) -> dict[str, Any]:
+        cfg = config or PipelineConfig()
+        source_path = require_existing_path(str(image_path), "Image")
+        load_timings = self.load_vl_model()
+        try:
+            with self._infer_lock:
+                with tempfile.TemporaryDirectory(prefix="qwen-pipeline-vl-") as tmp:
+                    tmp_dir = Path(tmp)
+                    normalized_image, image_info = normalize_image(
+                        source_path,
+                        tmp_dir,
+                        cfg.resize_max_edge,
+                    )
+                    mx.random.seed(cfg.seed)
+                    sampler = make_sampler(cfg.temperature, cfg.top_p)
+                    vl_prompt = build_vl_prompt(
+                        self._processor,
+                        str(normalized_image),
+                        cfg.vl_prompt,
+                    )
+                    started = time.perf_counter()
+                    vl_result = vlm_generate(
+                        self._vl_model,
+                        self._processor,
+                        prompt=vl_prompt,
+                        image=str(normalized_image),
+                        max_tokens=cfg.vl_max_tokens,
+                        temperature=cfg.temperature,
+                        top_p=cfg.top_p,
+                        sampler=sampler,
+                        verbose=False,
+                    )
+                    vision_seconds = round(time.perf_counter() - started, 2)
+        except Exception as exc:
+            self._last_infer_error = str(exc)
+            raise
+        else:
+            self._last_infer_error = None
+
+        return {
+            "image": str(source_path),
+            "vl_model": str(self.vl_model_path),
+            "lazy": self.lazy,
+            "config": asdict(cfg),
+            "image_info": image_info,
+            "timing_seconds": {
+                **load_timings,
+                "vision_generate": vision_seconds,
+            },
+            "vl_output": vl_result.text.strip(),
+        }
 
     def stream_infer(
         self,
