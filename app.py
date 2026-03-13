@@ -234,12 +234,10 @@ def detect_people(upload_path: Path) -> list[dict]:
 
 
 MEMORY_SCORE_WEIGHTS = {
-    "relationship": 0.25,
-    "eventfulness": 0.20,
-    "scene_uniqueness": 0.15,
+    "memorability": 0.35,
     "emotion": 0.20,
-    "memory_anchors": 0.10,
-    "rarity": 0.10,
+    "story": 0.25,
+    "anchors": 0.20,
 }
 
 
