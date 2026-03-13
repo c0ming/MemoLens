@@ -1,0 +1,1264 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MemoLens Debug</title>
+    <style>
+      :root {
+        --bg: #f0eadf;
+        --panel: rgba(255, 250, 241, 0.9);
+        --ink: #1d1c1a;
+        --muted: #6f675d;
+        --line: rgba(29, 28, 26, 0.14);
+        --accent: #0f766e;
+        --accent-2: #d97706;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", serif;
+        background:
+          radial-gradient(circle at top left, rgba(217, 119, 6, 0.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(15, 118, 110, 0.16), transparent 28%),
+          linear-gradient(180deg, #f7f2e8 0%, #efe7d7 100%);
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 18px 56px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+
+      .hero-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 4rem);
+        line-height: 0.95;
+        font-weight: 700;
+      }
+
+      .subtitle {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.8);
+        color: var(--ink);
+        text-decoration: none;
+        font-size: 0.92rem;
+      }
+
+      .nav-link.prominent {
+        width: 100%;
+        padding: 12px 16px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(15, 118, 110, 0.12) 0%, rgba(217, 119, 6, 0.12) 100%);
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        gap: 18px;
+      }
+
+      .grid > * {
+        min-width: 0;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 12px 40px rgba(68, 54, 38, 0.08);
+        backdrop-filter: blur(12px);
+      }
+
+      .controls {
+        padding: 18px;
+        position: sticky;
+        top: 18px;
+        align-self: start;
+      }
+
+      .results {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+      }
+
+      .section-title {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 0.92rem;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      input[type="file"],
+      input[type="number"],
+      textarea {
+        width: 100%;
+        margin-top: 6px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.75);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 92px;
+        resize: vertical;
+      }
+
+      .inline {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .inline > * {
+        min-width: 0;
+      }
+
+      button {
+        width: 100%;
+        padding: 14px 18px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent) 0%, #115e59 100%);
+        color: white;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: rgba(255, 255, 255, 0.84);
+        color: var(--ink);
+        border: 1px solid var(--line);
+      }
+
+      button:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+
+      button.is-busy {
+        cursor: wait;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .preset-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .preset-btn {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--ink);
+      }
+
+      .status {
+        margin-top: 12px;
+        min-height: 20px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .service-box {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        overflow: hidden;
+      }
+
+      .service-state {
+        font-weight: 700;
+      }
+
+      .service-state.ready {
+        color: var(--accent);
+      }
+
+      .service-state.error {
+        color: #b91c1c;
+      }
+
+      .service-state.loading {
+        color: var(--accent-2);
+      }
+
+      #service-details {
+        margin: 8px 0 0;
+        max-width: 100%;
+        max-height: 220px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        line-height: 1.45;
+      }
+
+      .preview {
+        display: block;
+        position: relative;
+        overflow: hidden;
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        border-radius: 18px;
+      }
+
+      .preview.ready {
+        width: 100%;
+        align-self: stretch;
+        line-height: 0;
+      }
+
+      .preview img {
+        display: block;
+        width: auto;
+        max-width: 100%;
+        height: auto;
+        max-height: 420px;
+        object-fit: contain;
+        vertical-align: top;
+        border-radius: 0;
+        margin: 0 auto;
+      }
+
+      .preview .meta {
+        padding: 0;
+      }
+
+      .info-toggle {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.92);
+        color: var(--ink);
+        font-size: 0.95rem;
+        font-weight: 700;
+        z-index: 2;
+      }
+
+      .info-popover {
+        position: absolute;
+        top: 56px;
+        right: 12px;
+        width: min(560px, calc(100% - 24px));
+        max-height: 360px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 250, 241, 0.98);
+        box-shadow: 0 18px 40px rgba(29, 28, 26, 0.12);
+        overflow: hidden;
+        z-index: 2;
+      }
+
+      .info-popover[hidden] {
+        display: none;
+      }
+
+      .info-popover .section-title {
+        margin-bottom: 8px;
+      }
+
+      .info-popover pre {
+        margin: 0;
+        max-height: 290px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.9rem;
+        line-height: 1.55;
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+
+      .metric {
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid var(--line);
+      }
+
+      .metric .label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .metric .value {
+        display: block;
+        margin-top: 6px;
+        font-size: 1.15rem;
+      }
+
+      .output {
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .output-header,
+      .popover-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .output-header .section-title,
+      .popover-header .section-title {
+        margin: 0;
+      }
+
+      .copy-btn {
+        width: auto;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        font-size: 0.82rem;
+        line-height: 1;
+      }
+
+      .output pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "SF Mono", "JetBrains Mono", monospace;
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .controls {
+          position: static;
+        }
+
+        .metric-row {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (min-width: 981px) {
+        .preview img {
+          max-height: 420px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-bar">
+          <div class="eyebrow">Local Qwen MLX</div>
+          <a class="nav-link" href="/">相册首页</a>
+          <a class="nav-link" href="/people">人物 ID 管理</a>
+        </div>
+        <p class="subtitle">
+          这个页面直接调用本机 FastAPI 服务。模型常驻内存，图片默认先缩到较合理的边长，再执行视觉解析和文本整理。
+        </p>
+      </section>
+
+      <section class="grid">
+        <form id="infer-form" class="panel controls stack">
+          <a class="nav-link prominent" href="/">返回相册首页</a>
+          <div id="image-input-section">
+            <h2 class="section-title">Input</h2>
+            <label>
+              图片
+              <input id="image" name="image" type="file" accept="image/*,.heic,.heif" required />
+            </label>
+          </div>
+
+          <div class="inline">
+            <label>
+              缩图长边
+              <input id="resize-max-edge" name="resize_max_edge" type="number" min="0" max="4096" value="768" />
+            </label>
+            <label>
+              随机种子
+              <input name="seed" type="number" min="0" value="7" />
+            </label>
+          </div>
+
+          <div class="preset-row">
+            <button class="preset-btn" type="button" data-preset="detail">细节优先</button>
+          </div>
+          <div class="meta">
+            默认会取原图长边与 1024 中较小的那个值。需要时可切到细节优先使用原图长边。
+          </div>
+
+          <div class="inline">
+            <label>
+              VL tokens
+              <input id="vl-max-tokens" name="vl_max_tokens" type="number" min="16" max="262144" value="131072" />
+            </label>
+            <label class="llm-only">
+              LLM tokens
+              <input id="llm-max-tokens" name="llm_max_tokens" type="number" min="32" max="262144" value="131072" />
+            </label>
+          </div>
+          <div class="meta" id="token-limit-note">
+            当前显示的是生成上限。实际可生成 token 上限 = 模型上下文上限 - 当前输入 token。
+          </div>
+
+          <div class="inline">
+            <label>
+              Temperature
+              <input name="temperature" type="number" min="0" max="2" step="0.1" value="0.2" />
+            </label>
+            <label>
+              Top P
+              <input name="top_p" type="number" min="0" max="1" step="0.05" value="0.9" />
+            </label>
+          </div>
+
+          <label>
+            VL Prompt
+            <textarea name="vl_prompt">请先基于图片本身提取可观察特征，再判断这张图是否适合做“回忆度评分”，最后再评估它的“回忆度”。
+
+定义：
+“回忆度”指这张照片在未来是否容易唤起具体、鲜明、可讲述的个人或家庭回忆。
+它不是摄影质量分，也不是美观分。请不要因为构图、清晰度、曝光普通就降低回忆度。
+重点看这张照片是否记录了有纪念意义的人、关系、时刻、场景、物品和细节。
+即使不是人物照片，截图、票据、纪念物、聊天记录、旅行场景、日常物件，也可能有很高回忆度。
+
+先提取以下可观察特征，不要强行分类，不要把看不出的内容写成确定事实。
+如果无法确认，请使用 uncertain。
+
+- has_people：true / false / uncertain
+- people_count_estimate：整数；如果无法判断可写 null
+- people_count_confidence：high / medium / low
+- has_close_interaction：true / false / uncertain
+- has_text：true / false / uncertain
+- looks_like_screenshot：true / false / uncertain
+- looks_like_document_or_record：true / false / uncertain
+- has_distinct_place_or_scene：true / false / uncertain
+- has_event_signal：true / false / uncertain
+- has_strong_memory_anchor：true / false / uncertain
+- scene_guess：一句简短中文，尽量具体，最好不超过 12 个字；如果无法判断就写“无法明确判断”
+
+然后判断：
+- is_memory_scorable：true / false
+- scorable_reason：一句简短中文，说明为什么适合或不适合评分
+
+如果图片极度模糊、纯黑、纯白、严重误拍、几乎没有可辨识信息，或无法形成稳定判断，可以设为 false。
+如果设为 false，仍然输出后续 JSON 字段，但 dimension_scores 尽量保守，summary 要说明原因。
+
+回忆度判断要基于这些特征，而不是基于预设类别。
+例如：
+- 有人物和互动时，更关注关系感、情绪和事件性
+- 像截图、票据、聊天记录、纪念物时，更关注信息锚点、时间感和稀缺性
+- 风景、食物、日常场景时，更关注场景独特性、生活气息和是否能唤起具体时刻
+- 如果无人像，就不要强行编造人物关系感
+- relationship 维度在无人像或关系不明显时可以低分，这不代表整张图一定低回忆度
+
+请从以下 6 个维度评分，每项 0-10 分：
+1. 人物关系感：是否体现人物之间的关系、陪伴、互动；如果无人像可低分
+2. 事件性：是否像一次明确事件、活动或特殊时刻
+3. 场景独特性：地点、时间、节日、旅行、成长节点是否有辨识度
+4. 情绪强度：是否有明显情绪，如开心、温暖、感动、庆祝、依恋
+5. 信息锚点：是否有能帮助未来回忆的具体细节，如人物、动作、物品、环境、文字
+6. 稀缺性：这一瞬间是否不容易重复，是否有“值得记住”的独特性
+
+评分规则：
+- 0-3：普通记录，缺少可唤起回忆的明确内容
+- 4-6：有一定家庭记录价值，但回忆点有限
+- 7-8：回忆度较高，未来容易想起具体人和情境
+- 9-10：强回忆照片，具有明显纪念意义或强烈情感价值
+
+请严格输出 JSON，不要输出额外说明，格式如下：
+{
+  "observations": {
+    "has_people": "true/false/uncertain",
+    "people_count_estimate": 0,
+    "people_count_confidence": "high/medium/low",
+    "has_close_interaction": "true/false/uncertain",
+    "has_text": "true/false/uncertain",
+    "looks_like_screenshot": "true/false/uncertain",
+    "looks_like_document_or_record": "true/false/uncertain",
+    "has_distinct_place_or_scene": "true/false/uncertain",
+    "has_event_signal": "true/false/uncertain",
+    "has_strong_memory_anchor": "true/false/uncertain",
+    "scene_guess": "一句简短中文描述"
+  },
+  "is_memory_scorable": true,
+  "scorable_reason": "一句简短中文说明",
+  "dimension_scores": {
+    "relationship": 0,
+    "eventfulness": 0,
+    "scene_uniqueness": 0,
+    "emotion": 0,
+    "memory_anchors": 0,
+    "rarity": 0
+  },
+  "summary": "一句话总结为什么这张照片回忆度高或低",
+  "caption_style": "从候选风格中选择一个",
+  "caption_line": "一句适合作为相册题注的话",
+  "anchors": [
+    "列出3到5个最能触发回忆的具体细节"
+  ],
+  "risks": [
+    "如果有，指出为什么这张图虽然好看但未必有回忆度"
+  ]
+}
+
+不要输出 memory_score，总分会由系统在你返回 dimension_scores 后自动计算，并补回最终结果。
+
+另外，请根据照片内容，自行选择一种最适合的题注风格，并生成一句适合作为家庭相册题注的话。
+
+无论选择哪种 caption_style，都必须满足以下前提：
+- 语言自然，不生硬，不像说明文
+- 带一点诗意和画面感，但不要过度堆砌辞藻
+- 不要写成 AI 总结口吻
+- 不要使用“这张照片里……”“画面中……”“照片记录了……”这类说明式开头
+- 更像人看到家庭相册时，顺手写下的一句题注
+- 不要凭空推断成长阶段、人生节点或“第一次”类故事
+- 除非图片里有非常明确的视觉证据，否则不要写“刚学会走路 / 刚学会游泳 / 第一次 / 那时候还小 / 小时候 / 初学 / 刚开始”这类表达
+- 如果无法确认，就只写照片中可见的人物、动作、关系、场景、情绪与氛围，不要补背景故事
+
+caption_line 要求：
+- 只写一句
+- 不要空泛，不要套话，不要鸡汤
+- 不要直接重复 summary
+- 要贴合照片里的具体人物、关系、场景或情绪
+- 如果画面本身很普通，就写得朴素一点，不要硬抒情
+- 优先基于可见事实来写，不要基于不可见背景故事来写
+
+summary 与 caption_line 的区别：
+- summary 偏判断和概括
+- caption_line 偏相册题注和余味
+- 两者不要只是同一句话换个说法
+
+caption_style 只能从以下候选中选择一个：
+- warm_caption：温柔、亲近，像家人会说的话
+- memory_note：有回忆感，像多年后翻相册时心里冒出来的一句回想，不要写成事件说明
+- life_sentence：偏日常、克制、自然
+- documentary_line：像纪实题注，简洁克制，但仍要有一点温度
+- poetic_line：略带诗意，但不要过度
+- album_title：短标题感，适合相册分组或封面</textarea>
+          </label>
+
+          <label class="llm-only">
+            LLM Task
+            <textarea name="task">请用一句简短的话描述整张图片的内容而不丢失重要细节，如果有识别到的人物，直接用人名替换来描述。</textarea>
+          </label>
+
+          <label class="llm-only">
+            System Prompt
+            <textarea name="system">你是一个严谨的中文助手。请基于提供的视觉解析结果完成任务，不要编造图片中不存在的细节。</textarea>
+          </label>
+
+          <div class="row">
+            <button id="submit" type="submit">开始推理</button>
+            <button id="cancel" class="secondary" type="button" disabled>中断推理</button>
+          </div>
+          <div id="status" class="status">服务启动后会在这里显示状态。</div>
+          <div class="service-box">
+            <h2 class="section-title">Service Status</h2>
+            <div id="service-state" class="service-state">等待连接</div>
+            <pre id="service-details" class="meta">等待状态</pre>
+          </div>
+        </form>
+
+        <section class="panel results">
+          <div class="preview">
+            <button id="info-toggle" class="info-toggle" type="button" aria-label="查看图片信息">i</button>
+            <div id="image-info-popover" class="info-popover" hidden>
+              <div class="popover-header">
+                <h2 class="section-title">Image Info</h2>
+                <button class="copy-btn" type="button" data-copy-target="image-info">复制</button>
+              </div>
+              <pre id="image-info">等待结果</pre>
+            </div>
+            <img id="preview" alt="预览图" hidden />
+            <div id="placeholder" class="meta">上传图片后会在这里显示预览。</div>
+          </div>
+
+          <div class="metric-row">
+            <div class="metric">
+              <span class="label">VL Load</span>
+              <span id="vl-load" class="value">-</span>
+            </div>
+            <div id="llm-load-metric" class="metric llm-only">
+              <span class="label">LLM Load</span>
+              <span id="llm-load" class="value">-</span>
+            </div>
+            <div class="metric">
+              <span class="label">VL Infer</span>
+              <span id="vl-time" class="value">-</span>
+            </div>
+            <div id="llm-time-metric" class="metric llm-only">
+              <span class="label">LLM Infer</span>
+              <span id="llm-time" class="value">-</span>
+            </div>
+          </div>
+
+          <div class="output">
+            <div class="output-header">
+              <h2 class="section-title">Identified People</h2>
+              <button class="copy-btn" type="button" data-copy-target="identified-people">复制</button>
+            </div>
+            <pre id="identified-people">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <div class="output-header">
+              <h2 class="section-title">Effective VL Prompt</h2>
+              <button class="copy-btn" type="button" data-copy-target="effective-vl-prompt">复制</button>
+            </div>
+            <pre id="effective-vl-prompt">等待结果</pre>
+          </div>
+
+          <div class="output">
+            <div class="output-header">
+              <h2 class="section-title">VL Output</h2>
+              <button class="copy-btn" type="button" data-copy-target="vl-output">复制</button>
+            </div>
+            <div class="meta">如果这里像是被截断，通常优先检查 `VL tokens` 是否过小，而不是页面高度。</div>
+            <pre id="vl-output">等待结果</pre>
+          </div>
+
+          <div id="llm-output-panel" class="output llm-only">
+            <div class="output-header">
+              <h2 class="section-title">Qwen3.5 Output</h2>
+              <button class="copy-btn" type="button" data-copy-target="llm-output">复制</button>
+            </div>
+            <pre id="llm-output">等待结果</pre>
+          </div>
+
+          <div id="reasoning-panel" class="output llm-only">
+            <div class="output-header">
+              <h2 class="section-title">Reasoning</h2>
+              <button class="copy-btn" type="button" data-copy-target="reasoning-output">复制</button>
+            </div>
+            <pre id="reasoning-output">如果你保留了 reasoning，它会显示在这里。</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("infer-form");
+      const imageInput = document.getElementById("image");
+      const preview = document.getElementById("preview");
+      const placeholder = document.getElementById("placeholder");
+      const infoToggle = document.getElementById("info-toggle");
+      const imageInfoPopover = document.getElementById("image-info-popover");
+      const statusNode = document.getElementById("status");
+      const submitButton = document.getElementById("submit");
+      const cancelButton = document.getElementById("cancel");
+      const serviceStateNode = document.getElementById("service-state");
+      const serviceDetailsNode = document.getElementById("service-details");
+      const resizeMaxEdgeInput = document.getElementById("resize-max-edge");
+      const vlMaxTokensInput = document.getElementById("vl-max-tokens");
+      const llmMaxTokensInput = document.getElementById("llm-max-tokens");
+      const tokenLimitNoteNode = document.getElementById("token-limit-note");
+      const llmOnlyNodes = document.querySelectorAll(".llm-only");
+      const imageInputSection = document.getElementById("image-input-section");
+      let llmAvailable = true;
+      let currentPreviewUrl = null;
+      let selectedImagePath = "";
+      let currentAbortController = null;
+      let currentInferenceId = null;
+      let autoStarted = false;
+
+      const setText = (id, value) => {
+        document.getElementById(id).textContent = value;
+      };
+
+      const query = new URLSearchParams(window.location.search);
+      const pendingImagePath = query.get("image_path") || "";
+      const shouldAutoStart = query.get("auto_start") === "1";
+
+      const setTimings = (timings = {}) => {
+        setText("vl-load", timings.load_vl_model ? `${timings.load_vl_model}s` : "-");
+        setText("llm-load", timings.load_llm_model ? `${timings.load_llm_model}s` : "-");
+        setText("vl-time", timings.vision_generate ? `${timings.vision_generate}s` : "-");
+        setText("llm-time", timings.llm_generate ? `${timings.llm_generate}s` : "-");
+      };
+
+      const resetInferenceView = () => {
+        setTimings();
+        setText("identified-people", "等待结果");
+        setText("effective-vl-prompt", "等待结果");
+        setText("vl-output", "等待结果");
+        setText("image-info", "等待结果");
+        if (llmAvailable) {
+          setText("llm-output", "等待结果");
+          setText("reasoning-output", "如果你保留了 reasoning，它会显示在这里。");
+        }
+      };
+
+      const isRunningInference = () => Boolean(currentAbortController && currentInferenceId);
+
+      function setRunningState(running) {
+        submitButton.disabled = running;
+        cancelButton.disabled = !running;
+        submitButton.classList.toggle("is-busy", running);
+        cancelButton.classList.toggle("is-busy", running);
+      }
+
+      async function notifyCancel(inferenceId, keepalive = false) {
+        if (!inferenceId) {
+          return;
+        }
+        const body = JSON.stringify({ inference_id: inferenceId });
+        if (keepalive && navigator.sendBeacon) {
+          const blob = new Blob([body], { type: "application/json" });
+          navigator.sendBeacon("/api/stream/cancel", blob);
+          return;
+        }
+        try {
+          await fetch("/api/stream/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            keepalive,
+          });
+        } catch (_error) {
+          // Ignore cancel failures.
+        }
+      }
+
+      async function cancelCurrentInference(reason = "推理已中断。", keepalive = false) {
+        const inferenceId = currentInferenceId;
+        if (currentAbortController) {
+          currentAbortController.abort();
+        }
+        currentAbortController = null;
+        currentInferenceId = null;
+        setRunningState(false);
+        if (inferenceId) {
+          await notifyCancel(inferenceId, keepalive);
+        }
+        statusNode.textContent = reason;
+      }
+
+      const setLlmVisibility = (enabled) => {
+        llmAvailable = enabled;
+        llmOnlyNodes.forEach((node) => {
+          node.hidden = !enabled;
+          node.querySelectorAll("input, textarea").forEach((field) => {
+            field.disabled = !enabled;
+          });
+        });
+      };
+
+      infoToggle.addEventListener("click", () => {
+        imageInfoPopover.hidden = !imageInfoPopover.hidden;
+      });
+
+      document.addEventListener("click", (event) => {
+        if (imageInfoPopover.hidden) {
+          return;
+        }
+        if (event.target === infoToggle || imageInfoPopover.contains(event.target)) {
+          return;
+        }
+        imageInfoPopover.hidden = true;
+      });
+
+      document.querySelectorAll("[data-copy-target]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const targetId = button.dataset.copyTarget;
+          const target = document.getElementById(targetId);
+          if (!target) {
+            return;
+          }
+          const text = target.textContent || "";
+          try {
+            await navigator.clipboard.writeText(text);
+            const original = button.textContent;
+            button.textContent = "已复制";
+            window.setTimeout(() => {
+              button.textContent = original;
+            }, 1200);
+          } catch (_error) {
+            statusNode.textContent = "复制失败，浏览器未允许剪贴板访问。";
+          }
+        });
+      });
+
+      const getPreviewLongEdge = () => {
+        if (preview.naturalWidth && preview.naturalHeight) {
+          return Math.max(preview.naturalWidth, preview.naturalHeight);
+        }
+        return null;
+      };
+
+      const syncResizeMaxEdgeWithPreview = () => {
+        const longEdge = getPreviewLongEdge();
+        if (!longEdge) {
+          return;
+        }
+        resizeMaxEdgeInput.value = String(Math.min(longEdge, 1024));
+      };
+
+      document.querySelectorAll("[data-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.preset === "detail") {
+            resizeMaxEdgeInput.value = String(getPreviewLongEdge() ?? 0);
+          }
+        });
+      });
+
+      function renderResult(payload = {}) {
+        if (payload.timing_seconds) {
+          setTimings(payload.timing_seconds);
+        }
+        if (payload.image_info) {
+          setText("image-info", JSON.stringify(payload.image_info, null, 2));
+        }
+        if (payload.effective_vl_prompt !== undefined) {
+          setText("effective-vl-prompt", payload.effective_vl_prompt || "等待结果");
+        }
+        if (payload.identified_people !== undefined) {
+          setText("identified-people", JSON.stringify(payload.identified_people || [], null, 2));
+        }
+        if (payload.vl_output !== undefined && payload.vl_output !== null) {
+          setText("vl-output", payload.vl_output || "等待结果");
+        }
+        if (!llmAvailable) {
+          return;
+        }
+        if (payload.llm_output !== undefined && payload.llm_output !== null) {
+          setText("llm-output", payload.llm_output || "等待结果");
+        }
+        if (payload.llm_reasoning !== undefined && payload.llm_reasoning !== null) {
+          setText("reasoning-output", payload.llm_reasoning || "未返回 reasoning，或当前输出已被隐藏。");
+        }
+      }
+
+      async function consumeSseStream(response) {
+        if (!response.body) {
+          throw new Error("流式响应不可用。");
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let sawComplete = false;
+
+        const handleEvent = (rawEvent) => {
+          const lines = rawEvent.split("\n");
+          let eventName = "message";
+          const dataLines = [];
+          lines.forEach((line) => {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          });
+          if (!dataLines.length) {
+            return;
+          }
+          const payload = JSON.parse(dataLines.join("\n"));
+          if (eventName === "status") {
+            statusNode.textContent = payload.message || "推理中。";
+            if (payload.timing_seconds) {
+              setTimings(payload.timing_seconds);
+            }
+            if (payload.image_info) {
+              setText("image-info", JSON.stringify(payload.image_info, null, 2));
+            }
+            if (payload.vl_output) {
+              setText("vl-output", payload.vl_output);
+            }
+            if (llmAvailable && payload.state === "running_llm") {
+              setText("reasoning-output", "Qwen3.5 推理中...");
+            }
+            return;
+          }
+          if (eventName === "image_info") {
+            statusNode.textContent = payload.message || "图片预处理完成。";
+            renderResult(payload);
+            return;
+          }
+          if (eventName === "identified_people") {
+            setText("identified-people", JSON.stringify(payload.identified_people || [], null, 2));
+            return;
+          }
+          if (eventName === "effective_vl_prompt") {
+            setText("effective-vl-prompt", payload.effective_vl_prompt || "等待结果");
+            return;
+          }
+          if (eventName === "vl_chunk") {
+            setText("vl-output", payload.accumulated_text || payload.text || "");
+            return;
+          }
+          if (eventName === "llm_chunk") {
+            if (!llmAvailable) {
+              return;
+            }
+            setText("llm-output", payload.llm_output || "等待回答...");
+            setText(
+              "reasoning-output",
+              payload.llm_reasoning || (payload.in_thinking ? "思考中..." : "未返回 reasoning，或当前输出已被隐藏。")
+            );
+            return;
+          }
+          if (eventName === "complete") {
+            renderResult(payload);
+            statusNode.textContent = "推理完成。";
+            sawComplete = true;
+            return;
+          }
+          if (eventName === "cancelled") {
+            statusNode.textContent = payload.message || "推理已中断。";
+            sawComplete = true;
+            return;
+          }
+          if (eventName === "error") {
+            throw new Error(payload.message || "未知错误");
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            if (!sawComplete) {
+              throw new Error("推理流提前中断，服务端没有返回完成事件。");
+            }
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          parts.forEach((part) => {
+            if (part.startsWith(":")) {
+              return;
+            }
+            handleEvent(part);
+          });
+        }
+      }
+
+      imageInput.addEventListener("change", () => {
+        const file = imageInput.files[0];
+        selectedImagePath = "";
+        if (!file) {
+          if (currentPreviewUrl) {
+            URL.revokeObjectURL(currentPreviewUrl);
+            currentPreviewUrl = null;
+          }
+          preview.parentElement.classList.remove("ready");
+          preview.hidden = true;
+          placeholder.hidden = false;
+          imageInfoPopover.hidden = true;
+          resetInferenceView();
+          return;
+        }
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+        currentPreviewUrl = URL.createObjectURL(file);
+        resizeMaxEdgeInput.value = "1024";
+        preview.src = currentPreviewUrl;
+        preview.parentElement.classList.add("ready");
+        preview.hidden = false;
+        placeholder.hidden = true;
+        imageInfoPopover.hidden = true;
+        resetInferenceView();
+        statusNode.textContent = "已选择新图片，等待推理。";
+      });
+
+      preview.addEventListener("load", () => {
+        syncResizeMaxEdgeWithPreview();
+        statusNode.textContent = "已选择新图片，默认缩图长边已更新。";
+      });
+
+      function renderServiceStatus(payload) {
+        let state = "未连接";
+        let className = "error";
+        setLlmVisibility(Boolean(payload.capabilities?.llm));
+        if (payload.loading) {
+          state = "模型加载中";
+          className = "loading";
+        } else if (payload.loaded) {
+          state = payload.capabilities?.llm ? "服务就绪" : "VL-only 就绪";
+          className = "ready";
+        } else if (payload.load_error) {
+          state = "模型加载失败";
+          className = "error";
+        }
+
+        serviceStateNode.textContent = state;
+        serviceStateNode.className = `service-state ${className}`;
+
+        const details = {
+          load_error: payload.load_error || null,
+          last_infer_error: payload.last_infer_error || null,
+          notices: payload.notices || [],
+          vl_model: payload.vl_model || null,
+          llm_model: payload.llm_model || null,
+          capabilities: payload.capabilities || {},
+          mode: payload.mode || null,
+          timing_seconds: payload.timing_seconds || {},
+          supported_limits: payload.supported_limits || {},
+        };
+        serviceDetailsNode.textContent = JSON.stringify(details, null, 2);
+
+        const limits = payload.supported_limits || {};
+        if (limits.vl_max_new_tokens_max) {
+          vlMaxTokensInput.max = String(limits.vl_max_new_tokens_max);
+        }
+        if (limits.llm_max_new_tokens_max) {
+          llmMaxTokensInput.max = String(limits.llm_max_new_tokens_max);
+        }
+        if (limits.vl_context_tokens || limits.llm_context_tokens) {
+          tokenLimitNoteNode.textContent =
+            `VL 理论上下文上限 ${limits.vl_context_tokens ?? "-"} tokens，` +
+            `LLM 理论上下文上限 ${limits.llm_context_tokens ?? "-"} tokens。` +
+            ` 实际可生成上限 = 上下文上限 - 当前输入 token。`;
+        } else if (!payload.capabilities?.llm) {
+          tokenLimitNoteNode.textContent = "当前只启用了 VL。LLM 未配置时不会显示相关参数和输出。";
+        }
+      }
+
+      async function loadStatus() {
+        if (isRunningInference()) {
+          return;
+        }
+        try {
+          const response = await fetch("/api/status");
+          const payload = await response.json();
+          renderServiceStatus(payload);
+          statusNode.textContent = payload.loaded
+            ? payload.capabilities?.llm
+              ? "模型已加载，可以直接上传图片。"
+              : "VL 模型已加载，可以直接上传图片。LLM 未配置，页面只显示视觉结果。"
+            : payload.loading
+              ? "服务在线，模型正在加载。"
+              : payload.load_error
+                ? `服务在线，但模型加载失败: ${payload.load_error}`
+                : "服务已启动，但模型尚未完成加载。";
+        } catch (error) {
+          statusNode.textContent = "无法连接到本地服务。";
+          serviceStateNode.textContent = "服务不可用";
+          serviceStateNode.className = "service-state error";
+          serviceDetailsNode.textContent = "无法连接到 /api/status";
+        }
+      }
+
+      function applyImagePathSelection(imagePath) {
+        selectedImagePath = imagePath;
+        imageInputSection.classList.add("hidden");
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+          currentPreviewUrl = null;
+        }
+        imageInput.value = "";
+        resizeMaxEdgeInput.value = "1024";
+        preview.src = `/api/library/image?path=${encodeURIComponent(imagePath)}`;
+        preview.parentElement.classList.add("ready");
+        preview.hidden = false;
+        placeholder.hidden = true;
+        imageInfoPopover.hidden = true;
+        resetInferenceView();
+        statusNode.textContent = "已从相册首页载入图片，等待推理。";
+      }
+
+      async function startInference() {
+        const file = imageInput.files[0];
+        const stripThinkingField = form.elements.strip_thinking;
+        const stripThinking = stripThinkingField ? stripThinkingField.checked : true;
+        if (!file && !selectedImagePath) {
+          statusNode.textContent = "先选择一张图片。";
+          return;
+        }
+        currentInferenceId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        currentAbortController = new AbortController();
+        setRunningState(true);
+        statusNode.textContent = "正在推理，原始大图会明显更慢。";
+        setText("vl-output", "推理中...");
+        setText("identified-people", "推理中...");
+        if (llmAvailable) {
+          setText("llm-output", "推理中...");
+          setText("reasoning-output", "推理中...");
+        }
+        setText("image-info", "推理中...");
+
+        try {
+          let response;
+          if (selectedImagePath) {
+            response = await fetch("/api/stream-path", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                image_path: selectedImagePath,
+                vl_prompt: form.elements.vl_prompt.value,
+                task: form.elements.task.value,
+                system: form.elements.system.value,
+                vl_max_tokens: Number(form.elements.vl_max_tokens.value),
+                llm_max_tokens: Number(form.elements.llm_max_tokens.value),
+                temperature: Number(form.elements.temperature.value),
+                top_p: Number(form.elements.top_p.value),
+                seed: Number(form.elements.seed.value),
+                resize_max_edge: Number(form.elements.resize_max_edge.value),
+                strip_thinking: stripThinking,
+                inference_id: currentInferenceId,
+              }),
+              signal: currentAbortController.signal,
+            });
+          } else {
+            const data = new FormData(form);
+            data.set("strip_thinking", String(stripThinking));
+            data.set("inference_id", currentInferenceId);
+            response = await fetch("/api/stream", {
+              method: "POST",
+              body: data,
+              signal: currentAbortController.signal,
+            });
+          }
+          if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(payload.detail || "请求失败");
+          }
+          await consumeSseStream(response);
+          loadStatus();
+        } catch (error) {
+          if (error.name === "AbortError") {
+            statusNode.textContent = "推理已中断。";
+          } else {
+            statusNode.textContent = `推理失败: ${error.message}`;
+            setText("vl-output", "推理失败");
+            setText("identified-people", "推理失败");
+            if (llmAvailable) {
+              setText("llm-output", "推理失败");
+              setText("reasoning-output", "推理失败");
+            }
+            setText("image-info", "推理失败");
+            loadStatus();
+          }
+        } finally {
+          currentAbortController = null;
+          currentInferenceId = null;
+          setRunningState(false);
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await startInference();
+      });
+
+      cancelButton.addEventListener("click", async () => {
+        await cancelCurrentInference("推理已手动中断。");
+      });
+
+      window.addEventListener("pagehide", () => {
+        if (!isRunningInference()) {
+          return;
+        }
+        cancelCurrentInference("推理已中断。", true);
+      });
+
+      loadStatus();
+      if (pendingImagePath) {
+        applyImagePathSelection(pendingImagePath);
+      }
+      if (pendingImagePath && shouldAutoStart && !autoStarted) {
+        autoStarted = true;
+        window.setTimeout(() => {
+          startInference();
+        }, 0);
+      }
+      setInterval(loadStatus, 5000);
+    </script>
+  </body>
+</html>

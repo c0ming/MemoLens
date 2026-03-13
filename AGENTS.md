@@ -7,7 +7,8 @@
 - `person_features.py`: Person profile storage, sample management, and local ID building.
 - `qwen_pipeline.py`: Shared inference pipeline, image normalization, model loading, and progress reporting.
 - `run_vl_to_qwen.py`: CLI wrapper for one-off local runs.
-- `static/index.html`: Single-page browser demo.
+- `static/index.html`: Album home page for scanning a local directory and listing photos.
+- `static/debug.html`: Single-page browser debug/demo for one-off image inference.
 - `static/people.html`: Person ID management page.
 - `README.md`: Setup and local run instructions.
 - `outputs/`: Local run artifacts and debug JSON. Ignored by Git by default.

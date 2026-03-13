@@ -4,16 +4,19 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from face_identity import identify_people
@@ -26,6 +29,7 @@ from qwen_pipeline import (
     DEFAULT_SYSTEM,
     DEFAULT_TASK,
     DEFAULT_VL_PROMPT,
+    InferenceCancelled,
     PipelineConfig,
     QwenPipeline,
 )
@@ -34,10 +38,15 @@ from qwen_pipeline import (
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 PERSON_FEATURES_DIR = BASE_DIR / "outputs" / "person_features"
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+MIN_LIBRARY_IMAGE_SIZE_BYTES = 100 * 1024
+MIN_LIBRARY_IMAGE_LONG_EDGE = 360
 pipeline = QwenPipeline()
 person_store = PersonFeatureStore(PERSON_FEATURES_DIR)
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
+stream_cancellations: dict[str, threading.Event] = {}
+stream_cancellations_lock = threading.Lock()
 
 
 class PersonProfileCreate(BaseModel):
@@ -48,6 +57,31 @@ class PersonProfileCreate(BaseModel):
 class PersonProfileUpdate(BaseModel):
     name: str
     notes: str = ""
+
+
+class LibraryScanRequest(BaseModel):
+    directories: list[str] = []
+    recursive: bool = False
+    directory: str | None = None
+
+
+class StreamPathRequest(BaseModel):
+    image_path: str
+    vl_prompt: str = DEFAULT_VL_PROMPT
+    task: str = DEFAULT_TASK
+    system: str = DEFAULT_SYSTEM
+    vl_max_tokens: int = 131072
+    llm_max_tokens: int = 131072
+    temperature: float = 0.2
+    top_p: float = 0.9
+    seed: int = 7
+    resize_max_edge: int = 768
+    strip_thinking: bool = True
+    inference_id: str | None = None
+
+
+class StreamCancelRequest(BaseModel):
+    inference_id: str
 
 
 @asynccontextmanager
@@ -248,6 +282,137 @@ def attach_vl_prompt(payload: dict, vl_prompt: str) -> dict:
     return payload
 
 
+def register_stream_cancellation(inference_id: str | None) -> tuple[str | None, threading.Event | None]:
+    if not inference_id:
+        return None, None
+    event = threading.Event()
+    with stream_cancellations_lock:
+        stream_cancellations[inference_id] = event
+    return inference_id, event
+
+
+def cancel_stream_inference(inference_id: str | None) -> None:
+    if not inference_id:
+        return
+    with stream_cancellations_lock:
+        event = stream_cancellations.get(inference_id)
+    if event is not None:
+        event.set()
+
+
+def cleanup_stream_cancellation(inference_id: str | None) -> None:
+    if not inference_id:
+        return
+    with stream_cancellations_lock:
+        stream_cancellations.pop(inference_id, None)
+
+
+def save_upload_to_temp(contents: bytes, suffix: str, prefix: str) -> tuple[str, Path]:
+    temp_dir = tempfile.mkdtemp(prefix=prefix)
+    upload_path = Path(temp_dir) / f"input{suffix}"
+    upload_path.write_bytes(contents)
+    return temp_dir, upload_path
+
+
+def prepare_inference(
+    image_path: Path,
+    *,
+    vl_prompt: str,
+    task: str,
+    system: str,
+    vl_max_tokens: int,
+    llm_max_tokens: int,
+    temperature: float,
+    top_p: float,
+    seed: int,
+    resize_max_edge: int,
+    strip_thinking: bool,
+) -> tuple[list[dict], PipelineConfig]:
+    identified_people = detect_people(image_path)
+    config = build_config(
+        inject_people_context(vl_prompt, identified_people),
+        task,
+        system,
+        vl_max_tokens,
+        llm_max_tokens,
+        temperature,
+        top_p,
+        seed,
+        resize_max_edge,
+        strip_thinking,
+    )
+    return identified_people, config
+
+
+def build_streaming_response(
+    upload_path: Path,
+    temp_dir: str | None,
+    config: PipelineConfig,
+    identified_people: list[dict],
+    inference_id: str | None = None,
+) -> StreamingResponse:
+    _, cancel_event = register_stream_cancellation(inference_id)
+
+    def should_cancel() -> bool:
+        return cancel_event.is_set() if cancel_event is not None else False
+
+    def event_stream():
+        try:
+            yield ": stream-start\n\n"
+            yield encode_sse(
+                "identified_people",
+                {
+                    "identified_people": identified_people,
+                },
+            )
+            yield encode_sse(
+                "effective_vl_prompt",
+                {
+                    "effective_vl_prompt": config.vl_prompt,
+                },
+            )
+            for item in pipeline.stream_infer(upload_path, config, should_cancel=should_cancel):
+                if item["event"] == "complete":
+                    item["data"] = attach_vl_prompt(
+                        enrich_identity_result(item["data"], identified_people=identified_people),
+                        config.vl_prompt,
+                    )
+                yield encode_sse(item["event"], item["data"])
+        except InferenceCancelled:
+            yield encode_sse(
+                "cancelled",
+                {
+                    "message": "推理已中断。",
+                    "inference_id": inference_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            yield encode_sse(
+                "error",
+                {
+                    "message": str(exc),
+                },
+            )
+        finally:
+            cleanup_stream_cancellation(inference_id)
+            if temp_dir is not None:
+                try:
+                    upload_path.unlink(missing_ok=True)
+                    Path(temp_dir).rmdir()
+                except OSError:
+                    pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def create_job() -> dict:
     job_id = uuid.uuid4().hex
     job = {
@@ -326,14 +491,169 @@ def run_job(
             pass
 
 
+def serialize_library_file(path: Path, base_dir: Path) -> dict:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "path": str(path),
+        "relative_path": str(path.relative_to(base_dir)),
+        "suffix": path.suffix.lower(),
+        "size_bytes": stat.st_size,
+        "modified_at": stat.st_mtime,
+    }
+
+
+def open_directory_picker() -> list[str]:
+    if sys.platform != "darwin":
+        raise HTTPException(status_code=501, detail="Native directory picker is currently only supported on macOS.")
+    script = """
+set chosenFolders to choose folder with prompt "选择一个或多个相册目录" with multiple selections allowed
+set pathList to {}
+repeat with oneFolder in chosenFolders
+  copy POSIX path of oneFolder to end of pathList
+end repeat
+set AppleScript's text item delimiters to linefeed
+return pathList as text
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Failed to open native directory picker.") from exc
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip().lower()
+        if "user canceled" in stderr or "cancel" in stderr:
+            return []
+        raise HTTPException(status_code=500, detail="Native directory picker failed.")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def should_include_library_image(path: Path) -> bool:
+    stat = path.stat()
+    if stat.st_size < MIN_LIBRARY_IMAGE_SIZE_BYTES:
+        return False
+    try:
+        with Image.open(path) as image:
+            corrected = ImageOps.exif_transpose(image)
+            long_edge = max(corrected.size)
+    except Exception:
+        return False
+    return long_edge >= MIN_LIBRARY_IMAGE_LONG_EDGE
+
+
+def iter_library_images(base_dir: Path, recursive: bool) -> list[dict]:
+    iterator = base_dir.rglob("*") if recursive else base_dir.iterdir()
+    files: list[dict] = []
+    for item in iterator:
+        if not item.is_file():
+            continue
+        if item.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            continue
+        if not should_include_library_image(item):
+            continue
+        files.append(serialize_library_file(item, base_dir))
+    return sorted(files, key=lambda item: item["modified_at"], reverse=True)
+
+
+def count_descendant_supported_images(base_dir: Path) -> int:
+    count = 0
+    for item in base_dir.rglob("*"):
+        if not item.is_file():
+            continue
+        if item.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            continue
+        count += 1
+    return count
+
+
+def resolve_scan_directories(payload: LibraryScanRequest) -> list[Path]:
+    raw_directories = [item for item in payload.directories if item]
+    if payload.directory:
+        raw_directories.append(payload.directory)
+    if not raw_directories:
+        raise HTTPException(status_code=400, detail="At least one directory is required.")
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for raw in raw_directories:
+        directory = Path(raw).expanduser().resolve()
+        key = str(directory)
+        if key in seen:
+            continue
+        if not directory.exists():
+            raise HTTPException(status_code=404, detail=f"Directory not found: {directory}")
+        if not directory.is_dir():
+            raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
+        seen.add(key)
+        resolved.append(directory)
+    return resolved
+
+
 @app.get("/")
-def index() -> FileResponse:
+def home() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/debug")
+def debug_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "debug.html")
 
 
 @app.get("/people")
 def people_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "people.html")
+
+
+@app.post("/api/library/pick-directories")
+def pick_library_directories() -> dict:
+    directories = open_directory_picker()
+    return {
+        "directories": directories,
+        "count": len(directories),
+    }
+
+
+@app.post("/api/library/scan")
+def scan_library(payload: LibraryScanRequest = Body(...)) -> dict:
+    directories = resolve_scan_directories(payload)
+    files: list[dict] = []
+    hints: list[str] = []
+    for directory in directories:
+        root_files = iter_library_images(directory, recursive=payload.recursive)
+        if not payload.recursive and not root_files:
+            nested_count = count_descendant_supported_images(directory)
+            if nested_count > 0:
+                hints.append(f"{directory.name} 的照片可能都在子目录里；开启递归扫描可读取约 {nested_count} 个候选文件。")
+        for item in root_files:
+            files.append(
+                {
+                    **item,
+                    "directory": str(directory),
+                    "directory_name": directory.name,
+                    "display_path": f"{directory.name}/{item['relative_path']}",
+                }
+            )
+    files.sort(key=lambda item: item["modified_at"], reverse=True)
+    return {
+        "directories": [str(item) for item in directories],
+        "recursive": payload.recursive,
+        "count": len(files),
+        "files": files,
+        "hints": hints,
+    }
+
+
+@app.get("/api/library/image")
+def library_image(path: str = Query(...)) -> FileResponse:
+    image_path = Path(path).expanduser().resolve()
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found.")
+    if image_path.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported image type.")
+    return FileResponse(image_path)
 
 
 @app.get("/api/status")
@@ -482,18 +802,18 @@ async def infer(
     with tempfile.TemporaryDirectory(prefix="qwen-upload-") as tmp:
         upload_path = Path(tmp) / f"input{suffix}"
         upload_path.write_bytes(contents)
-        identified_people = detect_people(upload_path)
-        config = build_config(
-            inject_people_context(vl_prompt, identified_people),
-            task,
-            system,
-            vl_max_tokens,
-            llm_max_tokens,
-            temperature,
-            top_p,
-            seed,
-            resize_max_edge,
-            strip_thinking,
+        identified_people, config = prepare_inference(
+            upload_path,
+            vl_prompt=vl_prompt,
+            task=task,
+            system=system,
+            vl_max_tokens=vl_max_tokens,
+            llm_max_tokens=llm_max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            seed=seed,
+            resize_max_edge=resize_max_edge,
+            strip_thinking=strip_thinking,
         )
 
         try:
@@ -526,21 +846,19 @@ async def create_infer_job(
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    temp_dir = tempfile.mkdtemp(prefix="qwen-job-")
-    upload_path = Path(temp_dir) / f"input{suffix}"
-    upload_path.write_bytes(contents)
-    identified_people = detect_people(upload_path)
-    config = build_config(
-        inject_people_context(vl_prompt, identified_people),
-        task,
-        system,
-        vl_max_tokens,
-        llm_max_tokens,
-        temperature,
-        top_p,
-        seed,
-        resize_max_edge,
-        strip_thinking,
+    temp_dir, upload_path = save_upload_to_temp(contents, suffix, "qwen-job-")
+    identified_people, config = prepare_inference(
+        upload_path,
+        vl_prompt=vl_prompt,
+        task=task,
+        system=system,
+        vl_max_tokens=vl_max_tokens,
+        llm_max_tokens=llm_max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        seed=seed,
+        resize_max_edge=resize_max_edge,
+        strip_thinking=strip_thinking,
     )
 
     job = create_job()
@@ -566,74 +884,72 @@ async def stream_infer(
     seed: int = Form(7),
     resize_max_edge: int = Form(768),
     strip_thinking: bool = Form(True),
+    inference_id: str | None = Form(None),
 ) -> StreamingResponse:
     suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
     contents = await image.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    temp_dir = tempfile.mkdtemp(prefix="qwen-stream-")
-    upload_path = Path(temp_dir) / f"input{suffix}"
-    upload_path.write_bytes(contents)
-    identified_people = detect_people(upload_path)
-    config = build_config(
-        inject_people_context(vl_prompt, identified_people),
-        task,
-        system,
-        vl_max_tokens,
-        llm_max_tokens,
-        temperature,
-        top_p,
-        seed,
-        resize_max_edge,
-        strip_thinking,
+    temp_dir, upload_path = save_upload_to_temp(contents, suffix, "qwen-stream-")
+    identified_people, config = prepare_inference(
+        upload_path,
+        vl_prompt=vl_prompt,
+        task=task,
+        system=system,
+        vl_max_tokens=vl_max_tokens,
+        llm_max_tokens=llm_max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        seed=seed,
+        resize_max_edge=resize_max_edge,
+        strip_thinking=strip_thinking,
+    )
+    return build_streaming_response(
+        upload_path,
+        temp_dir,
+        config,
+        identified_people,
+        inference_id=inference_id,
     )
 
-    def event_stream():
-        try:
-            yield ": stream-start\n\n"
-            yield encode_sse(
-                "identified_people",
-                {
-                    "identified_people": identified_people,
-                },
-            )
-            yield encode_sse(
-                "effective_vl_prompt",
-                {
-                    "effective_vl_prompt": config.vl_prompt,
-                },
-            )
-            for item in pipeline.stream_infer(upload_path, config):
-                if item["event"] == "complete":
-                    item["data"] = attach_vl_prompt(
-                        enrich_identity_result(item["data"], identified_people=identified_people),
-                        config.vl_prompt,
-                    )
-                yield encode_sse(item["event"], item["data"])
-        except Exception as exc:  # noqa: BLE001
-            yield encode_sse(
-                "error",
-                {
-                    "message": str(exc),
-                },
-            )
-        finally:
-            try:
-                upload_path.unlink(missing_ok=True)
-                Path(temp_dir).rmdir()
-            except OSError:
-                pass
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+@app.post("/api/stream-path")
+async def stream_infer_path(payload: StreamPathRequest = Body(...)) -> StreamingResponse:
+    source_path = Path(payload.image_path).expanduser().resolve()
+    if not source_path.exists() or not source_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found.")
+    if source_path.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported image type.")
+    identified_people, config = prepare_inference(
+        source_path,
+        vl_prompt=payload.vl_prompt,
+        task=payload.task,
+        system=payload.system,
+        vl_max_tokens=payload.vl_max_tokens,
+        llm_max_tokens=payload.llm_max_tokens,
+        temperature=payload.temperature,
+        top_p=payload.top_p,
+        seed=payload.seed,
+        resize_max_edge=payload.resize_max_edge,
+        strip_thinking=payload.strip_thinking,
     )
+    return build_streaming_response(
+        source_path,
+        None,
+        config,
+        identified_people,
+        inference_id=payload.inference_id,
+    )
+
+
+@app.post("/api/stream/cancel")
+def cancel_stream(payload: StreamCancelRequest = Body(...)) -> dict:
+    cancel_stream_inference(payload.inference_id)
+    return {
+        "cancelled": True,
+        "inference_id": payload.inference_id,
+    }
 
 
 @app.get("/api/jobs/{job_id}")
