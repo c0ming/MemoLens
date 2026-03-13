@@ -275,8 +275,8 @@
           <p class="subtitle">选择一个或多个本地相册目录后，页面会直接列出其中的照片。默认不递归扫描子目录；原来的单张推理页已移动到调试页。</p>
         </div>
         <div class="nav-row">
-          <a class="nav-link" href="/debug">进入调试页</a>
-          <a class="nav-link" href="/people">人物 ID 管理</a>
+          <a class="nav-link" href="/debug" target="_blank" rel="noopener noreferrer">进入调试页</a>
+          <a class="nav-link" href="/people" target="_blank" rel="noopener noreferrer">人物 ID 管理</a>
         </div>
       </section>
 
@@ -473,7 +473,7 @@
           const debugUrl = `/debug?image_path=${encodeURIComponent(file.path)}&auto_start=1`;
           return `
           <article class="card">
-            <a class="card-link" href="${debugUrl}">
+            <a class="card-link" href="${debugUrl}" target="_blank" rel="noopener noreferrer">
               <img src="${url}" alt="" loading="lazy" />
               <div class="card-body">
                 <div class="card-title">${escapeHtml(file.name)}</div>

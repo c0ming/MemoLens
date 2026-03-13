@@ -138,10 +138,8 @@ def require_existing_path(path: str, label: str) -> Path:
 
 
 def resolve_optional_path(path: str) -> Path | None:
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return None
-    return resolved
+    _ = Path(path).expanduser().resolve()
+    return None
 
 
 def maybe_write_json(path: str | None, payload: dict[str, Any]) -> None:
