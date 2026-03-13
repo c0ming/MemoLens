@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import json
+import re
 import tempfile
 import threading
 import time
@@ -198,8 +199,45 @@ def detect_people(upload_path: Path) -> list[dict]:
     return identify_people(upload_path, profiles)
 
 
+MEMORY_SCORE_WEIGHTS = {
+    "relationship": 0.25,
+    "eventfulness": 0.20,
+    "scene_uniqueness": 0.15,
+    "emotion": 0.20,
+    "memory_anchors": 0.10,
+    "rarity": 0.10,
+}
+
+
+def attach_computed_memory_score(payload: dict) -> dict:
+    vl_output = payload.get("vl_output")
+    if not isinstance(vl_output, str):
+        return payload
+    match = re.search(r"\{.*\}", vl_output.strip(), re.DOTALL)
+    if not match:
+        return payload
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return payload
+    dimension_scores = parsed.get("dimension_scores")
+    if not isinstance(dimension_scores, dict):
+        return payload
+    weighted_total = 0.0
+    for key, weight in MEMORY_SCORE_WEIGHTS.items():
+        value = dimension_scores.get(key)
+        if not isinstance(value, (int, float)):
+            return payload
+        weighted_total += float(value) * weight
+    parsed["memory_score"] = round(weighted_total, 1)
+    payload["vl_output"] = json.dumps(parsed, ensure_ascii=False, indent=2)
+    payload["memory_score"] = parsed["memory_score"]
+    return payload
+
+
 def enrich_identity_result(payload: dict, identified_people: list[dict] | None = None) -> dict:
     payload["identified_people"] = describe_people_layout(identified_people or [])
+    payload = attach_computed_memory_score(payload)
     if isinstance(payload.get("vl_output"), str):
         payload["vl_description"] = payload["vl_output"]
     return payload
