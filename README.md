@@ -150,6 +150,7 @@ Each profile may contain:
 - The browser demo now uses the streaming API so `Identified People` and `VL Output` can update before `Qwen3.5` finishes.
 - `Identified People` comes from local `InsightFace` matching, not from `Qwen-VL`.
 - The effective prompt shown in the UI is the final prompt after person-ID context has been injected.
+- The current default homepage VL prompt is a memory-scoring prompt for mixed album content. It first extracts observable cues, then scores memorability, and the backend computes `memory_score` from `dimension_scores`.
 - The page includes `速度优先 / 平衡 / 细节优先` presets. Use `速度优先` first if one photo is taking around 20 seconds.
 - By default the CLI strips reasoning text from the final `Qwen3.5` answer. Use `--keep-thinking` if you want the raw reasoning output.
 - By default the script fully loads both models. Use `--lazy` if you want lazy loading instead.

@@ -42,15 +42,46 @@ DEFAULT_LLM_MODEL = os.path.expanduser(
     "~/.lmstudio/models/nightmedia/"
     "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-qx64-hi-mlx"
 )
-DEFAULT_VL_PROMPT = """请你评估这张家庭相册照片的“回忆度”。
+DEFAULT_VL_PROMPT = """请先基于图片本身提取可观察特征，再判断这张图是否适合做“回忆度评分”，最后再评估它的“回忆度”。
 
 定义：
-“回忆度”指这张照片在未来是否容易唤起具体、鲜明、可讲述的家庭回忆。
+“回忆度”指这张照片在未来是否容易唤起具体、鲜明、可讲述的个人或家庭回忆。
 它不是摄影质量分，也不是美观分。请不要因为构图、清晰度、曝光普通就降低回忆度。
-重点看这张照片是否记录了有纪念意义的人、关系、时刻、场景和细节。
+重点看这张照片是否记录了有纪念意义的人、关系、时刻、场景、物品和细节。
+即使不是人物照片，截图、票据、纪念物、聊天记录、旅行场景、日常物件，也可能有很高回忆度。
+
+先提取以下可观察特征，不要强行分类，不要把看不出的内容写成确定事实。
+如果无法确认，请使用 uncertain。
+
+- has_people：true / false / uncertain
+- people_count_estimate：整数；如果无法判断可写 null
+- people_count_confidence：high / medium / low
+- has_close_interaction：true / false / uncertain
+- has_text：true / false / uncertain
+- looks_like_screenshot：true / false / uncertain
+- looks_like_document_or_record：true / false / uncertain
+- has_distinct_place_or_scene：true / false / uncertain
+- has_event_signal：true / false / uncertain
+- has_strong_memory_anchor：true / false / uncertain
+- scene_guess：一句简短中文，尽量具体，最好不超过 12 个字；如果无法判断就写“无法明确判断”
+
+然后判断：
+- is_memory_scorable：true / false
+- scorable_reason：一句简短中文，说明为什么适合或不适合评分
+
+如果图片极度模糊、纯黑、纯白、严重误拍、几乎没有可辨识信息，或无法形成稳定判断，可以设为 false。
+如果设为 false，仍然输出后续 JSON 字段，但 dimension_scores 尽量保守，summary 要说明原因。
+
+回忆度判断要基于这些特征，而不是基于预设类别。
+例如：
+- 有人物和互动时，更关注关系感、情绪和事件性
+- 像截图、票据、聊天记录、纪念物时，更关注信息锚点、时间感和稀缺性
+- 风景、食物、日常场景时，更关注场景独特性、生活气息和是否能唤起具体时刻
+- 如果无人像，就不要强行编造人物关系感
+- relationship 维度在无人像或关系不明显时可以低分，这不代表整张图一定低回忆度
 
 请从以下 6 个维度评分，每项 0-10 分：
-1. 人物关系感：是否体现家庭成员之间的关系、陪伴、互动
+1. 人物关系感：是否体现人物之间的关系、陪伴、互动；如果无人像可低分
 2. 事件性：是否像一次明确事件、活动或特殊时刻
 3. 场景独特性：地点、时间、节日、旅行、成长节点是否有辨识度
 4. 情绪强度：是否有明显情绪，如开心、温暖、感动、庆祝、依恋
@@ -65,6 +96,21 @@ DEFAULT_VL_PROMPT = """请你评估这张家庭相册照片的“回忆度”。
 
 请严格输出 JSON，不要输出额外说明，格式如下：
 {
+  "observations": {
+    "has_people": "true/false/uncertain",
+    "people_count_estimate": 0,
+    "people_count_confidence": "high/medium/low",
+    "has_close_interaction": "true/false/uncertain",
+    "has_text": "true/false/uncertain",
+    "looks_like_screenshot": "true/false/uncertain",
+    "looks_like_document_or_record": "true/false/uncertain",
+    "has_distinct_place_or_scene": "true/false/uncertain",
+    "has_event_signal": "true/false/uncertain",
+    "has_strong_memory_anchor": "true/false/uncertain",
+    "scene_guess": "一句简短中文描述"
+  },
+  "is_memory_scorable": true,
+  "scorable_reason": "一句简短中文说明",
   "dimension_scores": {
     "relationship": 0,
     "eventfulness": 0,
@@ -75,7 +121,7 @@ DEFAULT_VL_PROMPT = """请你评估这张家庭相册照片的“回忆度”。
   },
   "summary": "一句话总结为什么这张照片回忆度高或低",
   "caption_style": "从候选风格中选择一个",
-  "caption_line": "一句适合作为家庭相册题注的话",
+  "caption_line": "一句适合作为相册题注的话",
   "anchors": [
     "列出3到5个最能触发回忆的具体细节"
   ],
@@ -83,6 +129,8 @@ DEFAULT_VL_PROMPT = """请你评估这张家庭相册照片的“回忆度”。
     "如果有，指出为什么这张图虽然好看但未必有回忆度"
   ]
 }
+
+不要输出 memory_score，总分会由系统在你返回 dimension_scores 后自动计算，并补回最终结果。
 
 另外，请根据照片内容，自行选择一种最适合的题注风格，并生成一句适合作为家庭相册题注的话。
 
@@ -103,6 +151,11 @@ caption_line 要求：
 - 要贴合照片里的具体人物、关系、场景或情绪
 - 如果画面本身很普通，就写得朴素一点，不要硬抒情
 - 优先基于可见事实来写，不要基于不可见背景故事来写
+
+summary 与 caption_line 的区别：
+- summary 偏判断和概括
+- caption_line 偏相册题注和余味
+- 两者不要只是同一句话换个说法
 
 caption_style 只能从以下候选中选择一个：
 - warm_caption：温柔、亲近，像家人会说的话
