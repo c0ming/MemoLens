@@ -30,6 +30,8 @@ final class HomeViewController: UIViewController {
     private var progressContainerHeightConstraint: Constraint?
     private var delayedAnalysisStartTask: Task<Void, Never>?
     private var hasTriggeredAnalysisStart = false
+    private var lastKnownStatuses: [String: PhotoAnalysisStatus] = [:]
+    private var needsInitialAnalysisStatusSync = true
 
     init() {
         let layout = UICollectionViewFlowLayout()
@@ -198,8 +200,7 @@ final class HomeViewController: UIViewController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updateProgress()
-            self?.collectionView.reloadData()
+            self?.handleAnalysisStatusUpdate()
         }
         observers.append(analysisObserver)
     }
@@ -218,6 +219,8 @@ final class HomeViewController: UIViewController {
         } else {
             cancelDelayedAnalysisStart()
             hasTriggeredAnalysisStart = false
+            lastKnownStatuses = [:]
+            needsInitialAnalysisStatusSync = true
             analysisCoordinator.setProcessingEnabled(false)
             setProgressVisible(false, animated: true)
         }
@@ -284,7 +287,9 @@ extension HomeViewController: UICollectionViewDataSource {
 
         let asset = assets[indexPath.item]
         cell.representedAssetIdentifier = asset.localIdentifier
-        cell.apply(status: analysisCoordinator.status(for: asset.localIdentifier))
+        let currentStatus = analysisCoordinator.status(for: asset.localIdentifier)
+        cell.apply(status: currentStatus, animateCompletion: false)
+        lastKnownStatuses[asset.localIdentifier] = currentStatus
 
         if cell.imageRequestID != PHInvalidImageRequestID {
             libraryService.cancelImageRequest(cell.imageRequestID)
@@ -329,6 +334,18 @@ extension HomeViewController: UICollectionViewDataSourcePrefetching {
 }
 
 private extension HomeViewController {
+    func handleAnalysisStatusUpdate() {
+        updateProgress()
+        if needsInitialAnalysisStatusSync {
+            applyVisibleCellStatusesSilently()
+            lastKnownStatuses = captureCurrentStatuses()
+            needsInitialAnalysisStatusSync = false
+            return
+        }
+        refreshVisibleCellStatuses()
+        lastKnownStatuses = captureCurrentStatuses()
+    }
+
     func scheduleDelayedAnalysisStartIfNeeded() {
         guard isViewLoaded, view.window != nil else { return }
         guard libraryService.hasFullAccess else { return }
@@ -418,6 +435,37 @@ private extension HomeViewController {
                 self.progressContainerView.isHidden = true
             }
         }
+    }
+
+    func refreshVisibleCellStatuses() {
+        for cell in collectionView.visibleCells {
+            guard let photoCell = cell as? PhotoGridCell else { continue }
+            guard let assetIdentifier = photoCell.representedAssetIdentifier else { continue }
+            let currentStatus = analysisCoordinator.status(for: assetIdentifier)
+            let previousStatus = lastKnownStatuses[assetIdentifier]
+            if currentStatus == .completed {
+                if previousStatus != .completed {
+                    photoCell.apply(status: .completed, animateCompletion: true)
+                }
+                continue
+            }
+            photoCell.apply(status: currentStatus, animateCompletion: false)
+        }
+    }
+
+    func applyVisibleCellStatusesSilently() {
+        for cell in collectionView.visibleCells {
+            guard let photoCell = cell as? PhotoGridCell else { continue }
+            guard let assetIdentifier = photoCell.representedAssetIdentifier else { continue }
+            let currentStatus = analysisCoordinator.status(for: assetIdentifier)
+            photoCell.apply(status: currentStatus, animateCompletion: false)
+        }
+    }
+
+    func captureCurrentStatuses() -> [String: PhotoAnalysisStatus] {
+        Dictionary(uniqueKeysWithValues: assets.map { asset in
+            (asset.localIdentifier, analysisCoordinator.status(for: asset.localIdentifier))
+        })
     }
 
     func thumbnailTargetSize() -> CGSize {

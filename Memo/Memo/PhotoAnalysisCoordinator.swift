@@ -41,7 +41,9 @@ final class PhotoAnalysisCoordinator {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.scheduleRebuild()
+            Task { @MainActor [weak self] in
+                self?.scheduleRebuild()
+            }
         }
 
         scheduleRebuild()
