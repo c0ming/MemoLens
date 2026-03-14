@@ -1,0 +1,17 @@
+source 'https://cdn.cocoapods.org/'
+
+platform :ios, '18.0'
+
+target 'Memo' do
+  use_frameworks! :linkage => :static
+
+  pod 'SnapKit'
+
+  target 'MemoTests' do
+    inherit! :search_paths
+  end
+
+  target 'MemoUITests' do
+    inherit! :search_paths
+  end
+end

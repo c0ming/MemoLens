@@ -36,7 +36,7 @@ else:
 
 
 DEFAULT_VL_MODEL = os.path.expanduser(
-    "~/.lmstudio/models/lmstudio-community/Qwen3-VL-8B-Instruct-MLX-8bit"
+    "~/.lmstudio/models/lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"
 )
 DEFAULT_LLM_MODEL = os.path.expanduser(
     "~/.lmstudio/models/nightmedia/"
