@@ -13,6 +13,7 @@ struct PhotoAnalysisRecord: Codable {
     let assetModificationTimestamp: TimeInterval?
     let status: PhotoAnalysisStatus
     let updatedAt: TimeInterval
+    let analysisDurationSeconds: TimeInterval?
     let memoryScore: Double?
     let resultJSONString: String?
     let errorMessage: String?

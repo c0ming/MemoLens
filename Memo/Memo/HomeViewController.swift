@@ -5,7 +5,7 @@ import UIKit
 final class HomeViewController: UIViewController {
     private enum Layout {
         static let spacing: CGFloat = 12
-        static let progressExpandedHeight: CGFloat = 66
+        static let progressExpandedHeight: CGFloat = 84
         static let progressAnimationDuration: TimeInterval = 0.28
         static let progressAnimationOffset: CGFloat = 10
         static let analysisStartDelayNanoseconds: UInt64 = 3_000_000_000
@@ -15,6 +15,7 @@ final class HomeViewController: UIViewController {
     private let progressContainerView = UIView()
     private let progressTitleLabel = UILabel()
     private let progressValueLabel = UILabel()
+    private let progressEtaLabel = UILabel()
     private let progressView = UIProgressView(progressViewStyle: .default)
     private let unauthorizedContainerView = UIView()
     private let unauthorizedTitleLabel = UILabel()
@@ -88,6 +89,9 @@ final class HomeViewController: UIViewController {
         progressTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         progressValueLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
         progressValueLabel.textAlignment = .right
+        progressEtaLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        progressEtaLabel.textColor = .secondaryLabel
+        progressEtaLabel.numberOfLines = 1
 
         progressView.trackTintColor = .tertiarySystemFill
         progressView.progressTintColor = .systemBlue
@@ -124,7 +128,7 @@ final class HomeViewController: UIViewController {
         [progressContainerView, unauthorizedContainerView, collectionView].forEach {
             scrollContainerView.addSubview($0)
         }
-        [progressTitleLabel, progressValueLabel, progressView].forEach {
+        [progressTitleLabel, progressValueLabel, progressEtaLabel, progressView].forEach {
             progressContainerView.addSubview($0)
         }
         [unauthorizedTitleLabel, unauthorizedDetailLabel, authorizeButton].forEach {
@@ -151,8 +155,14 @@ final class HomeViewController: UIViewController {
             make.leading.greaterThanOrEqualTo(progressTitleLabel.snp.trailing).offset(12)
         }
 
+        progressEtaLabel.snp.makeConstraints { make in
+            make.top.equalTo(progressTitleLabel.snp.bottom).offset(6)
+            make.leading.equalTo(progressTitleLabel)
+            make.trailing.lessThanOrEqualToSuperview().inset(14)
+        }
+
         progressView.snp.makeConstraints { make in
-            make.top.equalTo(progressTitleLabel.snp.bottom).offset(12)
+            make.top.equalTo(progressEtaLabel.snp.bottom).offset(10)
             make.leading.trailing.bottom.equalToSuperview().inset(14)
         }
 
@@ -231,11 +241,13 @@ final class HomeViewController: UIViewController {
         guard snapshot.totalCount > 0 else {
             progressView.progress = 0
             progressValueLabel.text = nil
+            progressEtaLabel.text = nil
             setProgressVisible(false, animated: true)
             return
         }
 
         progressValueLabel.text = "\(snapshot.processedCount) / \(snapshot.totalCount)"
+        progressEtaLabel.text = snapshot.etaText ?? "正在估算剩余时长"
         progressView.progress = Float(snapshot.processedCount) / Float(snapshot.totalCount)
         setProgressVisible(snapshot.isVisible, animated: true)
     }

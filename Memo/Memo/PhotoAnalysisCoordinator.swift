@@ -5,11 +5,14 @@ struct PhotoAnalysisProgressSnapshot {
     let processedCount: Int
     let totalCount: Int
     let isVisible: Bool
+    let etaText: String?
 }
 
 @MainActor
 final class PhotoAnalysisCoordinator {
     static let shared = PhotoAnalysisCoordinator()
+
+    private static let defaultEstimatedSecondsPerItem: TimeInterval = 18
 
     private let libraryService = PhotoLibraryService.shared
     private let store = PhotoAnalysisStore()
@@ -23,6 +26,7 @@ final class PhotoAnalysisCoordinator {
     private var started = false
     private var processingEnabled = false
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private var estimatedSecondsPerItem: TimeInterval = defaultEstimatedSecondsPerItem
 
     private init() {}
 
@@ -66,11 +70,13 @@ final class PhotoAnalysisCoordinator {
     func progressSnapshot() -> PhotoAnalysisProgressSnapshot {
         let totalCount = libraryService.currentAssets().count
         let processedCount = itemStates.values.filter { $0 == .completed || $0 == .failed }.count
+        let remainingCount = max(totalCount - processedCount, 0)
         let isVisible = processingEnabled && totalCount > 0 && (runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty)
         return PhotoAnalysisProgressSnapshot(
             processedCount: processedCount,
             totalCount: totalCount,
-            isVisible: isVisible
+            isVisible: isVisible,
+            etaText: isVisible ? Self.bucketedETA(for: remainingCount, secondsPerItem: estimatedSecondsPerItem) : nil
         )
     }
 
@@ -103,6 +109,7 @@ final class PhotoAnalysisCoordinator {
     private func rebuildState() async {
         let assets = libraryService.currentAssets()
         let records = await store.loadAllRecords()
+        estimatedSecondsPerItem = Self.estimatedDuration(from: Array(records.values))
 
         var nextStates: [String: PhotoAnalysisStatus] = [:]
         var nextPending: [String] = []
@@ -192,6 +199,7 @@ final class PhotoAnalysisCoordinator {
             return
         }
 
+        let analysisStartedAt = Date()
         let selectedPhoto = try await libraryService.requestAnalysisPhoto(
             for: asset,
             userInterfaceIdiom: UIDevice.current.userInterfaceIdiom
@@ -207,6 +215,7 @@ final class PhotoAnalysisCoordinator {
             onChunk: { _ in },
             onComplete: { _ in }
         )
+        let analysisDuration = Date().timeIntervalSince(analysisStartedAt)
 
         let record = PhotoAnalysisRecord(
             assetLocalIdentifier: identifier,
@@ -214,6 +223,7 @@ final class PhotoAnalysisCoordinator {
             assetModificationTimestamp: asset.modificationDate?.timeIntervalSince1970,
             status: .completed,
             updatedAt: Date().timeIntervalSince1970,
+            analysisDurationSeconds: analysisDuration,
             memoryScore: Self.extractMemoryScore(from: resultJSONString),
             resultJSONString: resultJSONString,
             errorMessage: nil
@@ -223,6 +233,7 @@ final class PhotoAnalysisCoordinator {
 
         runningAssetIdentifier = nil
         itemStates[identifier] = .completed
+        estimatedSecondsPerItem = Self.updatedEstimatedDuration(current: estimatedSecondsPerItem, sample: analysisDuration)
         print("[PhotoAnalysisCoordinator] analyzed \(identifier)")
         notifyDidUpdate()
     }
@@ -235,6 +246,7 @@ final class PhotoAnalysisCoordinator {
             assetModificationTimestamp: asset?.modificationDate?.timeIntervalSince1970,
             status: .failed,
             updatedAt: Date().timeIntervalSince1970,
+            analysisDurationSeconds: nil,
             memoryScore: nil,
             resultJSONString: nil,
             errorMessage: errorMessage
@@ -288,5 +300,54 @@ final class PhotoAnalysisCoordinator {
         }
 
         return nil
+    }
+
+    private static func estimatedDuration(from records: [PhotoAnalysisRecord]) -> TimeInterval {
+        let durations = records.compactMap { record -> TimeInterval? in
+            guard record.status == .completed else { return nil }
+            guard let duration = record.analysisDurationSeconds, duration > 0 else { return nil }
+            return duration
+        }
+
+        guard !durations.isEmpty else {
+            return defaultEstimatedSecondsPerItem
+        }
+
+        let average = durations.reduce(0, +) / Double(durations.count)
+        return max(6, min(180, average))
+    }
+
+    private static func updatedEstimatedDuration(current: TimeInterval, sample: TimeInterval) -> TimeInterval {
+        let clampedSample = max(6, min(180, sample))
+        return current * 0.7 + clampedSample * 0.3
+    }
+
+    private static func bucketedETA(for remainingCount: Int, secondsPerItem: TimeInterval) -> String? {
+        guard remainingCount > 0 else { return nil }
+        let remainingSeconds = Double(remainingCount) * secondsPerItem
+        if remainingSeconds < 45 {
+            return "预计不到 1 分钟"
+        }
+        if remainingSeconds < 90 {
+            return "预计约 1 分钟"
+        }
+        if remainingSeconds < 10 * 60 {
+            let minutes = Int((remainingSeconds / 60).rounded())
+            return "预计约 \(minutes) 分钟"
+        }
+        if remainingSeconds < 60 * 60 {
+            let minutes = Int((remainingSeconds / 300).rounded()) * 5
+            return "预计约 \(max(minutes, 10)) 分钟"
+        }
+        if remainingSeconds < 4 * 60 * 60 {
+            let halfHours = (remainingSeconds / 1800).rounded()
+            let hours = halfHours / 2
+            if halfHours.truncatingRemainder(dividingBy: 2) == 0 {
+                return "预计约 \(Int(hours)) 小时"
+            }
+            return "预计约 \(Int(floor(hours))) 小时半"
+        }
+        let hours = Int((remainingSeconds / 3600).rounded())
+        return "预计约 \(max(hours, 4)) 小时"
     }
 }
