@@ -1,0 +1,271 @@
+import Photos
+import UIKit
+
+struct PhotoAnalysisProgressSnapshot {
+    let processedCount: Int
+    let totalCount: Int
+    let isVisible: Bool
+}
+
+@MainActor
+final class PhotoAnalysisCoordinator {
+    static let shared = PhotoAnalysisCoordinator()
+
+    private let libraryService = PhotoLibraryService.shared
+    private let store = PhotoAnalysisStore()
+
+    private var itemStates: [String: PhotoAnalysisStatus] = [:]
+    private var pendingAssetIdentifiers: [String] = []
+    private var runningAssetIdentifier: String?
+    private var workerTask: Task<Void, Never>?
+    private var rebuildTask: Task<Void, Never>?
+    private var observer: NSObjectProtocol?
+    private var started = false
+    private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+
+    private init() {}
+
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    func start() {
+        guard !started else { return }
+        started = true
+
+        observer = NotificationCenter.default.addObserver(
+            forName: .photoLibraryServiceDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.scheduleRebuild()
+        }
+
+        scheduleRebuild()
+    }
+
+    func sceneDidBecomeActive() {
+        finishBackgroundTaskIfNeeded()
+        start()
+        scheduleRebuild()
+    }
+
+    func sceneDidEnterBackground() {
+        guard runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty else {
+            finishBackgroundTaskIfNeeded()
+            return
+        }
+        beginBackgroundTaskIfNeeded()
+    }
+
+    func progressSnapshot() -> PhotoAnalysisProgressSnapshot {
+        let totalCount = libraryService.currentAssets().count
+        let processedCount = itemStates.values.filter { $0 == .completed || $0 == .failed }.count
+        let isVisible = totalCount > 0 && (runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty)
+        return PhotoAnalysisProgressSnapshot(
+            processedCount: processedCount,
+            totalCount: totalCount,
+            isVisible: isVisible
+        )
+    }
+
+    func status(for assetLocalIdentifier: String) -> PhotoAnalysisStatus {
+        itemStates[assetLocalIdentifier] ?? .pending
+    }
+
+    private func scheduleRebuild() {
+        rebuildTask?.cancel()
+        rebuildTask = Task { [weak self] in
+            guard let self else { return }
+            await self.rebuildState()
+        }
+    }
+
+    private func rebuildState() async {
+        let assets = libraryService.currentAssets()
+        let records = await store.loadAllRecords()
+
+        var nextStates: [String: PhotoAnalysisStatus] = [:]
+        var nextPending: [String] = []
+
+        for asset in assets {
+            let identifier = asset.localIdentifier
+
+            if identifier == runningAssetIdentifier {
+                nextStates[identifier] = .running
+                continue
+            }
+
+            if let record = records[identifier], Self.record(record, matches: asset) {
+                nextStates[identifier] = record.status
+            } else {
+                nextStates[identifier] = .pending
+                nextPending.append(identifier)
+            }
+        }
+
+        itemStates = nextStates
+        pendingAssetIdentifiers = nextPending
+
+        if let runningAssetIdentifier, nextStates[runningAssetIdentifier] == nil {
+            self.runningAssetIdentifier = nil
+        }
+
+        notifyDidUpdate()
+        startProcessingIfNeeded()
+    }
+
+    private func startProcessingIfNeeded() {
+        guard workerTask == nil else { return }
+        guard libraryService.hasFullAccess else {
+            notifyDidUpdate()
+            return
+        }
+        guard !pendingAssetIdentifiers.isEmpty else {
+            finishBackgroundTaskIfNeeded()
+            notifyDidUpdate()
+            return
+        }
+
+        beginBackgroundTaskIfNeeded()
+        workerTask = Task { [weak self] in
+            guard let self else { return }
+            await self.processQueue()
+        }
+    }
+
+    private func processQueue() async {
+        while let nextIdentifier = nextPendingAssetIdentifier() {
+            do {
+                try await analyzeAsset(withLocalIdentifier: nextIdentifier)
+            } catch {
+                print("[PhotoAnalysisCoordinator] analyze failed for \(nextIdentifier): \(error.localizedDescription)")
+                await markFailure(for: nextIdentifier, errorMessage: error.localizedDescription)
+            }
+        }
+
+        workerTask = nil
+        finishBackgroundTaskIfNeeded()
+        notifyDidUpdate()
+    }
+
+    private func nextPendingAssetIdentifier() -> String? {
+        guard !pendingAssetIdentifiers.isEmpty else {
+            return nil
+        }
+
+        let identifier = pendingAssetIdentifiers.removeFirst()
+        runningAssetIdentifier = identifier
+        itemStates[identifier] = .running
+        notifyDidUpdate()
+        return identifier
+    }
+
+    private func analyzeAsset(withLocalIdentifier identifier: String) async throws {
+        guard let asset = libraryService.asset(withLocalIdentifier: identifier) else {
+            runningAssetIdentifier = nil
+            itemStates.removeValue(forKey: identifier)
+            notifyDidUpdate()
+            return
+        }
+
+        let selectedPhoto = try await libraryService.requestAnalysisPhoto(
+            for: asset,
+            userInterfaceIdiom: UIDevice.current.userInterfaceIdiom
+        )
+        let imageData = selectedPhoto.image.normalizedJPEGData()
+
+        let resultJSONString = try await LocalVLMService.shared.streamImage(
+            imageData,
+            userInterfaceIdiom: UIDevice.current.userInterfaceIdiom,
+            originalPixelSize: selectedPhoto.originalPixelSize,
+            onLoadProgress: { _ in },
+            onImageInfo: { _ in },
+            onChunk: { _ in },
+            onComplete: { _ in }
+        )
+
+        let record = PhotoAnalysisRecord(
+            assetLocalIdentifier: identifier,
+            assetCreationTimestamp: asset.creationDate?.timeIntervalSince1970,
+            assetModificationTimestamp: asset.modificationDate?.timeIntervalSince1970,
+            status: .completed,
+            updatedAt: Date().timeIntervalSince1970,
+            memoryScore: Self.extractMemoryScore(from: resultJSONString),
+            resultJSONString: resultJSONString,
+            errorMessage: nil
+        )
+
+        await store.save(record)
+
+        runningAssetIdentifier = nil
+        itemStates[identifier] = .completed
+        print("[PhotoAnalysisCoordinator] analyzed \(identifier)")
+        notifyDidUpdate()
+    }
+
+    private func markFailure(for identifier: String, errorMessage: String) async {
+        let asset = libraryService.asset(withLocalIdentifier: identifier)
+        let record = PhotoAnalysisRecord(
+            assetLocalIdentifier: identifier,
+            assetCreationTimestamp: asset?.creationDate?.timeIntervalSince1970,
+            assetModificationTimestamp: asset?.modificationDate?.timeIntervalSince1970,
+            status: .failed,
+            updatedAt: Date().timeIntervalSince1970,
+            memoryScore: nil,
+            resultJSONString: nil,
+            errorMessage: errorMessage
+        )
+
+        await store.save(record)
+        runningAssetIdentifier = nil
+        itemStates[identifier] = .failed
+        notifyDidUpdate()
+    }
+
+    private func notifyDidUpdate() {
+        NotificationCenter.default.post(name: .photoAnalysisCoordinatorDidUpdate, object: nil)
+    }
+
+    private func beginBackgroundTaskIfNeeded() {
+        guard backgroundTaskIdentifier == .invalid else { return }
+        backgroundTaskIdentifier = UIApplication.shared.beginBackgroundTask(withName: "MemoPhotoAnalysis") { [weak self] in
+            Task { @MainActor in
+                self?.finishBackgroundTaskIfNeeded()
+            }
+        }
+    }
+
+    private func finishBackgroundTaskIfNeeded() {
+        guard backgroundTaskIdentifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
+        backgroundTaskIdentifier = .invalid
+    }
+
+    private static func record(_ record: PhotoAnalysisRecord, matches asset: PHAsset) -> Bool {
+        let recordModification = record.assetModificationTimestamp ?? 0
+        let assetModification = asset.modificationDate?.timeIntervalSince1970 ?? 0
+        return abs(recordModification - assetModification) < 1
+    }
+
+    private static func extractMemoryScore(from jsonString: String) -> Double? {
+        guard
+            let data = jsonString.data(using: .utf8),
+            let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        if let number = jsonObject["memory_score"] as? NSNumber {
+            return number.doubleValue
+        }
+
+        if let string = jsonObject["memory_score"] as? String {
+            return Double(string)
+        }
+
+        return nil
+    }
+}

@@ -24,13 +24,12 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
     private var hasReceivedChunk = false
     private var runStartedAt = Date()
     private var latestMetrics: VLMRunMetrics?
-    private var selectedImage: UIImage?
-    private var selectedImageData: Data?
     private var selectedOriginalPixelSize: CGSize?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "VL 测试"
+        Self.log("viewDidLoad")
         configureUI()
     }
 
@@ -147,9 +146,11 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     @objc
     private func selectPhoto() {
+        Self.log("selectPhoto tapped")
         Task { [weak self] in
             guard let self else { return }
             let granted = await self.ensureFullPhotoLibraryAccess()
+            Self.log("photo access granted=\(granted)")
             guard granted else { return }
             await MainActor.run {
                 var configuration = PHPickerConfiguration(photoLibrary: .shared())
@@ -158,6 +159,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
                 let picker = PHPickerViewController(configuration: configuration)
                 picker.delegate = self
+                Self.log("presenting PHPickerViewController")
                 self.present(picker, animated: true)
             }
         }
@@ -165,10 +167,12 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     @objc
     private func runVLTest() {
-        guard let selectedImageData else {
+        guard let selectedImage = imageView.image else {
             statusLabel.text = "请先从系统相册选择一张照片。"
+            Self.log("runVLTest aborted, no selected image")
             return
         }
+        Self.log("runVLTest start, imageSize=\(selectedImage.size.width)x\(selectedImage.size.height)")
         hasReceivedChunk = false
         latestMetrics = nil
         runStartedAt = Date()
@@ -177,6 +181,9 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
         spinner.startAnimating()
         statusLabel.text = "正在加载 2B VL 模型并流式生成..."
         outputView.text = "生成中..."
+
+        let selectedImageData = selectedImage.normalizedJPEGData()
+        Self.log("runVLTest image encoded, bytes=\(selectedImageData.count)")
 
         Task { [weak self] in
             guard let self else { return }
@@ -221,10 +228,15 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
                     }
                 )
                 await MainActor.run {
+                    Self.log("runVLTest completed, resultChars=\(result.count)")
                     self.outputView.text = result
                     if let metrics = self.latestMetrics {
+                        Self.log(
+                            "runVLTest metrics, generatedTokens=\(metrics.generatedTokenCount), totalTime=\(metrics.totalTime), tps=\(metrics.tokensPerSecond)"
+                        )
                         self.statusLabel.text = "生成完成。输出 \(metrics.generatedTokenCount) tokens，耗时 \(self.formatSeconds(metrics.totalTime))，\(self.formatRate(metrics.tokensPerSecond)) tok/s"
                     } else {
+                        Self.log("runVLTest completed without metrics")
                         self.statusLabel.text = "流式生成完成。"
                     }
                     self.imageView.isUserInteractionEnabled = true
@@ -233,6 +245,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
                 }
             } catch {
                 await MainActor.run {
+                    Self.log("runVLTest failed: \(error.localizedDescription)")
                     self.outputView.text = error.localizedDescription
                     self.statusLabel.text = "生成失败。"
                     self.imageView.isUserInteractionEnabled = true
@@ -253,11 +266,13 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     private func ensureFullPhotoLibraryAccess() async -> Bool {
         let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        Self.log("photo authorization status=\(currentStatus.rawValue)")
         switch currentStatus {
         case .authorized:
             return true
         case .notDetermined:
             let newStatus = await requestPhotoLibraryAuthorization()
+            Self.log("photo authorization requested, newStatus=\(newStatus.rawValue)")
             if newStatus == .authorized {
                 return true
             }
@@ -285,6 +300,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     @MainActor
     private func presentPhotoAccessAlert(for status: PHAuthorizationStatus) {
+        Self.log("presentPhotoAccessAlert status=\(status.rawValue)")
         let message: String
         switch status {
         case .limited:
@@ -310,9 +326,11 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        Self.log("picker didFinishPicking, count=\(results.count)")
         picker.dismiss(animated: true)
 
         guard let result = results.first else {
+            Self.log("picker returned no selection")
             return
         }
 
@@ -327,8 +345,10 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
             do {
                 let selectedPhoto = try await self.loadSelectedPhoto(from: result)
                 await MainActor.run {
-                    self.selectedImage = selectedPhoto.image
-                    self.selectedImageData = selectedPhoto.imageData
+                    Self.log(
+                        "selected photo ready, previewSize=\(selectedPhoto.image.size.width)x\(selectedPhoto.image.size.height), "
+                            + "originalSize=\(selectedPhoto.originalPixelSize.width)x\(selectedPhoto.originalPixelSize.height)"
+                    )
                     self.selectedOriginalPixelSize = selectedPhoto.originalPixelSize
                     self.imageView.image = selectedPhoto.image
                     self.placeholderLabel.isHidden = self.imageView.image != nil
@@ -339,8 +359,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
                 }
             } catch {
                 await MainActor.run {
-                    self.selectedImage = nil
-                    self.selectedImageData = nil
+                    Self.log("loadSelectedPhoto failed: \(error.localizedDescription)")
                     self.selectedOriginalPixelSize = nil
                     self.imageView.image = nil
                     self.placeholderLabel.isHidden = false
@@ -356,16 +375,20 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     private func loadSelectedPhoto(from result: PHPickerResult) async throws -> SelectedPhoto {
         if let assetIdentifier = result.assetIdentifier {
+            Self.log("loading selected photo from PHAsset, assetIdentifier=\(assetIdentifier)")
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
             if let asset = assets.firstObject {
                 return try await loadSelectedPhoto(from: asset)
             }
+            Self.log("assetIdentifier not found in local photo library")
         }
 
+        Self.log("falling back to NSItemProvider image loading")
         return try await loadSelectedPhotoFromProvider(result.itemProvider)
     }
 
     private func loadSelectedPhoto(from asset: PHAsset) async throws -> SelectedPhoto {
+        Self.log("requestImage from asset, pixelSize=\(asset.pixelWidth)x\(asset.pixelHeight)")
         let requestOptions = PHImageRequestOptions()
         requestOptions.deliveryMode = .highQualityFormat
         requestOptions.resizeMode = .fast
@@ -380,6 +403,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
         } else {
             targetSize = CGSize(width: round(longEdge * aspectRatio), height: longEdge)
         }
+        Self.log("requestImage targetSize=\(targetSize.width)x\(targetSize.height)")
 
         return try await withCheckedThrowingContinuation { continuation in
             PHImageManager.default().requestImage(
@@ -389,24 +413,28 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
                 options: requestOptions
             ) { image, info in
                 if let error = info?[PHImageErrorKey] as? Error {
+                    Self.log("PHImageManager requestImage error: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                     return
                 }
                 if (info?[PHImageCancelledKey] as? Bool) == true {
+                    Self.log("PHImageManager requestImage cancelled")
                     continuation.resume(throwing: LocalVLMError.invalidSelectedImage)
                     return
                 }
                 if (info?[PHImageResultIsDegradedKey] as? Bool) == true {
+                    Self.log("PHImageManager returned degraded image, waiting for final image")
                     return
                 }
                 guard let image else {
+                    Self.log("PHImageManager returned nil image")
                     continuation.resume(throwing: LocalVLMError.invalidSelectedImage)
                     return
                 }
+                Self.log("PHImageManager returned final image size=\(image.size.width)x\(image.size.height)")
                 continuation.resume(
                     returning: SelectedPhoto(
                         image: image,
-                        imageData: image.normalizedJPEGData(),
                         originalPixelSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight)
                     )
                 )
@@ -415,21 +443,24 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
     }
 
     private func loadSelectedPhotoFromProvider(_ provider: NSItemProvider) async throws -> SelectedPhoto {
+        Self.log("loadSelectedPhotoFromProvider start")
         return try await withCheckedThrowingContinuation { continuation in
             provider.loadObject(ofClass: UIImage.self) { reading, error in
                 if let error {
+                    Self.log("NSItemProvider loadObject error: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                     return
                 }
                 guard let image = reading as? UIImage else {
+                    Self.log("NSItemProvider returned non-UIImage object")
                     continuation.resume(throwing: LocalVLMError.invalidSelectedImage)
                     return
                 }
                 let pixelSize = image.size.applying(.init(scaleX: image.scale, y: image.scale))
+                Self.log("NSItemProvider returned image size=\(pixelSize.width)x\(pixelSize.height)")
                 continuation.resume(
                     returning: SelectedPhoto(
                         image: image,
-                        imageData: image.normalizedJPEGData(),
                         originalPixelSize: pixelSize
                     )
                 )
@@ -438,26 +469,10 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
     }
 }
 
-private struct SelectedPhoto {
-    let image: UIImage
-    let imageData: Data
-    let originalPixelSize: CGSize
-}
+final class ViewController: LocalVLMTestViewController {}
 
-private extension UIImage {
-    func normalizedJPEGData() -> Data {
-        if let data = jpegData(compressionQuality: 0.92) {
-            return data
-        }
-
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let renderedImage = renderer.image { _ in
-            draw(in: CGRect(origin: .zero, size: size))
-        }
-        return renderedImage.jpegData(compressionQuality: 0.92) ?? Data()
+private extension LocalVLMTestViewController {
+    static func log(_ message: String) {
+        print("[LocalVLMTestViewController] \(message)")
     }
 }
-
-final class ViewController: LocalVLMTestViewController {}

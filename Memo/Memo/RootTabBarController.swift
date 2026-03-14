@@ -7,21 +7,17 @@ final class RootTabBarController: UITabBarController {
     }
 
     private func configureTabs() {
+        let homeNavigationController = makeNavigationController(
+            rootViewController: HomeViewController(),
+            title: "首页",
+            imageName: "house",
+            selectedImageName: "house.fill"
+        )
         let testNavigationController = makeNavigationController(
             rootViewController: LocalVLMTestViewController(),
             title: "测试",
             imageName: "sparkles.rectangle.stack",
             selectedImageName: "sparkles.rectangle.stack.fill"
-        )
-        let albumsNavigationController = makeNavigationController(
-            rootViewController: PlaceholderViewController(
-                title: "相册",
-                headline: "相册页",
-                detail: "这里后续放系统相册读取、分组浏览和记忆卡片入口。"
-            ),
-            title: "相册",
-            imageName: "photo.on.rectangle",
-            selectedImageName: "photo.on.rectangle.fill"
         )
         let settingsNavigationController = makeNavigationController(
             rootViewController: PlaceholderViewController(
@@ -35,8 +31,8 @@ final class RootTabBarController: UITabBarController {
         )
 
         viewControllers = [
+            homeNavigationController,
             testNavigationController,
-            albumsNavigationController,
             settingsNavigationController,
         ]
     }

@@ -17,20 +17,26 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = RootTabBarController()
         window.makeKeyAndVisible()
         self.window = window
+
+        PhotoLibraryService.shared.refreshAssetsIfAuthorized()
+        PhotoAnalysisCoordinator.shared.start()
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        PhotoAnalysisCoordinator.shared.sceneDidBecomeActive()
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
+        PhotoLibraryService.shared.refreshAssetsIfAuthorized()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        PhotoAnalysisCoordinator.shared.sceneDidEnterBackground()
     }
 }

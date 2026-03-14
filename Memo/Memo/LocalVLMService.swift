@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import MLXLMCommon
 import MLXVLM
 import UIKit
@@ -38,10 +39,26 @@ actor LocalVLMService {
 
     private static let phoneMaxInputLongEdge: CGFloat = 1024
     private static let padMaxInputLongEdge: CGFloat = 2016
+    private static let promptResourceName = "vl_prompt"
+    private static let memoryCacheLimitBytes = 32 * 1024 * 1024
+    private static let memoryScoreWeights: [String: Double] = [
+        "memorability": 0.18,
+        "story": 0.15,
+        "relationship": 0.14,
+        "emotion": 0.12,
+        "anchors": 0.10,
+        "life_stage": 0.10,
+        "revisit_value": 0.09,
+        "warmth": 0.07,
+        "uniqueness": 0.05,
+    ]
+    private static let hasHumanWeight = 0.10
     private let modelFolderName = "Qwen3-VL-2B-Instruct-4bit"
     private var modelContainer: ModelContainer?
     private var modelContainerTask: Task<ModelContainer, Error>?
-    private let prompt = """
+    private let prompt: String
+
+    private static let defaultPrompt = """
     请分析这张图片，并严格输出 JSON，不要输出额外说明。
 
     你需要完成 4 件事：
@@ -110,6 +127,12 @@ actor LocalVLMService {
     }
     """
 
+    init() {
+        Memory.cacheLimit = Self.memoryCacheLimitBytes
+        self.prompt = Self.loadPrompt()
+        Self.log("initialized, cacheLimit=\(Self.memoryCacheLimitBytes) bytes")
+    }
+
     nonisolated static func preferredPhotoRequestLongEdge(for idiom: UIUserInterfaceIdiom) -> CGFloat {
         maxInputLongEdge(for: idiom)
     }
@@ -123,58 +146,84 @@ actor LocalVLMService {
         onChunk: @escaping @Sendable (String) async -> Void,
         onComplete: @escaping @Sendable (VLMRunMetrics) async -> Void
     ) async throws -> String {
+        Self.log("streamImage start, imageDataBytes=\(imageData.count), idiom=\(userInterfaceIdiom.rawValue)")
         let modelContainer = try await resolveModelContainer(onLoadProgress: onLoadProgress)
-        guard let image = UIImage(data: imageData) else {
-            throw LocalVLMError.invalidSelectedImage
+        Self.log("model container ready")
+        let preparedImage: (image: UserInput.Image, info: ImageSizingInfo) = try autoreleasepool {
+            guard let image = UIImage(data: imageData) else {
+                throw LocalVLMError.invalidSelectedImage
+            }
+            return Self.prepareInputImage(
+                from: image,
+                originalPixelSize: originalPixelSize,
+                userInterfaceIdiom: userInterfaceIdiom
+            )
         }
-        let preparedImage = Self.prepareInputImage(
-            from: image,
-            originalPixelSize: originalPixelSize,
-            userInterfaceIdiom: userInterfaceIdiom
-        )
         let session = ChatSession(modelContainer, processing: .init(resize: nil))
         print(
             "VL input image size: original \(preparedImage.info.originalWidth)x\(preparedImage.info.originalHeight), "
                 + "effective \(preparedImage.info.effectiveWidth)x\(preparedImage.info.effectiveHeight)"
         )
+        Self.log(
+            "prepared image, original=\(preparedImage.info.originalWidth)x\(preparedImage.info.originalHeight), "
+                + "effective=\(preparedImage.info.effectiveWidth)x\(preparedImage.info.effectiveHeight)"
+        )
         await onImageInfo(preparedImage.info)
 
         var output = ""
-        for try await generation in session.streamDetails(
-            to: prompt,
-            images: [preparedImage.image],
-            videos: []
-        ) {
-            if let chunk = generation.chunk {
-                output += chunk
-                print(chunk, terminator: "")
-                await onChunk(chunk)
-            }
-            if let info = generation.info {
-                await onComplete(
-                    VLMRunMetrics(
-                        promptTokenCount: info.promptTokenCount,
-                        generatedTokenCount: info.generationTokenCount,
-                        promptTime: info.promptTime,
-                        generationTime: info.generateTime,
-                        tokensPerSecond: info.tokensPerSecond,
-                        totalTime: info.promptTime + info.generateTime
+        do {
+            for try await generation in session.streamDetails(
+                to: prompt,
+                images: [preparedImage.image],
+                videos: []
+            ) {
+                if let chunk = generation.chunk {
+                    output += chunk
+                    print(chunk, terminator: "")
+                    await onChunk(chunk)
+                }
+                if let info = generation.info {
+                    Self.log(
+                        "generation info, promptTokens=\(info.promptTokenCount), generatedTokens=\(info.generationTokenCount), "
+                            + "promptTime=\(info.promptTime), generateTime=\(info.generateTime), tps=\(info.tokensPerSecond)"
                     )
-                )
+                    await onComplete(
+                        VLMRunMetrics(
+                            promptTokenCount: info.promptTokenCount,
+                            generatedTokenCount: info.generationTokenCount,
+                            promptTime: info.promptTime,
+                            generationTime: info.generateTime,
+                            tokensPerSecond: info.tokensPerSecond,
+                            totalTime: info.promptTime + info.generateTime
+                        )
+                    )
+                }
             }
+            await session.clear()
+            Memory.clearCache()
+            Self.log("session cleared, MLX cache cleared")
+            print("")
+            let finalOutput = Self.augmentedOutput(from: output)
+            Self.log("streamImage completed, rawOutputChars=\(output.count), finalOutputChars=\(finalOutput.count)")
+            return finalOutput
+        } catch {
+            await session.clear()
+            Memory.clearCache()
+            Self.log("streamImage failed: \(error.localizedDescription)")
+            throw error
         }
-        print("")
-        return output
     }
 
     private func resolveModelContainer(
         onLoadProgress: @escaping @Sendable (Double) async -> Void
     ) async throws -> ModelContainer {
         if let modelContainer {
+            Self.log("reusing cached model container")
             await onLoadProgress(1)
             return modelContainer
         }
         if let modelContainerTask {
+            Self.log("awaiting in-flight model container task")
             let modelContainer = try await modelContainerTask.value
             await onLoadProgress(1)
             return modelContainer
@@ -182,6 +231,7 @@ actor LocalVLMService {
 
         let task = Task<ModelContainer, Error> {
             let modelURL = try Self.modelDirectoryURL(folderName: modelFolderName)
+            Self.log("loading model from \(modelURL.path)")
             let configuration = ModelConfiguration(directory: modelURL)
             return try await VLMModelFactory.shared.loadContainer(configuration: configuration) { progress in
                 print("VL model load progress: \(Int(progress.fractionCompleted * 100))%")
@@ -197,10 +247,12 @@ actor LocalVLMService {
             let modelContainer = try await task.value
             self.modelContainer = modelContainer
             self.modelContainerTask = nil
+            Self.log("model container load completed")
             await onLoadProgress(1)
             return modelContainer
         } catch {
             self.modelContainerTask = nil
+            Self.log("model container load failed: \(error.localizedDescription)")
             throw error
         }
     }
@@ -221,11 +273,171 @@ actor LocalVLMService {
             let weightsURL = directory.appendingPathComponent("model.safetensors")
             if FileManager.default.fileExists(atPath: configURL.path),
                FileManager.default.fileExists(atPath: weightsURL.path) {
+                Self.log("resolved model directory at \(directory.path)")
                 return directory
             }
         }
 
+        Self.log("failed to resolve model directory for folder \(folderName)")
         throw LocalVLMError.missingModelDirectory
+    }
+
+    private static func loadPrompt() -> String {
+        guard let promptURL = Bundle.main.url(forResource: promptResourceName, withExtension: "md") else {
+            print("VL prompt resource not found, using embedded default prompt.")
+            log("prompt resource missing, using embedded default")
+            return defaultPrompt
+        }
+
+        do {
+            let prompt = try String(contentsOf: promptURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !prompt.isEmpty else {
+                print("VL prompt resource is empty, using embedded default prompt.")
+                log("prompt resource empty at \(promptURL.path), using embedded default")
+                return defaultPrompt
+            }
+            log("loaded prompt from \(promptURL.path), chars=\(prompt.count)")
+            return prompt
+        } catch {
+            print("Failed to load VL prompt resource: \(error.localizedDescription). Using embedded default prompt.")
+            log("failed to load prompt: \(error.localizedDescription), using embedded default")
+            return defaultPrompt
+        }
+    }
+
+    private static func augmentedOutput(from rawOutput: String) -> String {
+        log("augment start, rawOutputChars=\(rawOutput.count)")
+        guard
+            let cleanedOutput = cleanedJSONString(from: rawOutput),
+            let jsonData = cleanedOutput.data(using: .utf8),
+            let jsonObject = try? JSONSerialization.jsonObject(with: jsonData),
+            var root = jsonObject as? [String: Any]
+        else {
+            log("augment skipped, unable to parse JSON from output")
+            return rawOutput
+        }
+        log("cleaned JSON chars=\(cleanedOutput.count)")
+
+        let analysisKey: String
+        if root["memorability_analysis"] is [String: Any] {
+            analysisKey = "memorability_analysis"
+        } else if root["dimension_scores"] is [String: Any] {
+            analysisKey = "dimension_scores"
+        } else {
+            log("augment skipped, no memorability_analysis or dimension_scores key")
+            return rawOutput
+        }
+        log("using analysisKey=\(analysisKey)")
+
+        guard var scores = root[analysisKey] as? [String: Any] else {
+            log("augment skipped, analysis payload is not dictionary")
+            return rawOutput
+        }
+
+        var weightedScore = 0.0
+        var totalWeight = 0.0
+
+        for (key, weight) in memoryScoreWeights {
+            let value = normalizedScoreValue(from: scores[key])
+            scores[key] = value
+            weightedScore += value * weight
+            totalWeight += weight
+            log("score[\(key)]=\(value), weight=\(weight)")
+        }
+
+        for (key, value) in scores {
+            guard memoryScoreWeights[key] == nil else { continue }
+            scores[key] = normalizedScoreValue(from: value)
+        }
+
+        root[analysisKey] = scores
+
+        if let hasHuman = root["has_human"] as? Bool {
+            let humanScore = hasHuman ? 8.0 : 4.0
+            weightedScore += humanScore * hasHumanWeight
+            totalWeight += hasHumanWeight
+            log("has_human(bool)=\(hasHuman), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+        } else if let hasHumanNumber = root["has_human"] as? NSNumber {
+            let humanScore = hasHumanNumber.boolValue ? 8.0 : 4.0
+            weightedScore += humanScore * hasHumanWeight
+            totalWeight += hasHumanWeight
+            root["has_human"] = hasHumanNumber.boolValue
+            log("has_human(number)=\(hasHumanNumber), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+        } else if let hasHumanString = root["has_human"] as? String {
+            let normalized = ["true", "1", "yes"].contains(hasHumanString.lowercased())
+            let humanScore = normalized ? 8.0 : 4.0
+            weightedScore += humanScore * hasHumanWeight
+            totalWeight += hasHumanWeight
+            root["has_human"] = normalized
+            log("has_human(string)=\(hasHumanString), normalized=\(normalized), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+        } else {
+            log("has_human missing, no additional weight applied")
+        }
+
+        guard totalWeight > 0 else {
+            log("augment skipped, totalWeight=0")
+            return rawOutput
+        }
+
+        let roundedMemoryScore = round((weightedScore / totalWeight) * 10) / 10
+        root["memory_score"] = roundedMemoryScore
+        log("computed memory_score=\(roundedMemoryScore), weightedScore=\(weightedScore), totalWeight=\(totalWeight)")
+
+        guard
+            let normalizedData = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]),
+            let normalizedString = String(data: normalizedData, encoding: .utf8)
+        else {
+            log("augment failed, unable to serialize normalized JSON")
+            return rawOutput
+        }
+
+        log("augment complete, finalJSONChars=\(normalizedString.count)")
+        return normalizedString
+    }
+
+    private static func cleanedJSONString(from rawOutput: String) -> String? {
+        let trimmed = rawOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            log("cleanedJSONString: output empty after trim")
+            return nil
+        }
+
+        if trimmed.hasPrefix("```") {
+            let lines = trimmed.components(separatedBy: .newlines)
+            guard lines.count >= 3 else {
+                log("cleanedJSONString: fenced block too short")
+                return nil
+            }
+
+            let bodyLines = Array(lines.dropFirst().dropLast())
+            let fencedBody = bodyLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fencedBody.isEmpty {
+                log("cleanedJSONString: stripped fenced code block")
+                return fencedBody
+            }
+        }
+
+        log("cleanedJSONString: using trimmed raw output")
+        return trimmed
+    }
+
+    private static func normalizedScoreValue(from rawValue: Any?) -> Double {
+        let numericValue: Double
+        switch rawValue {
+        case let value as NSNumber:
+            numericValue = value.doubleValue
+        case let value as String:
+            numericValue = Double(value) ?? 0
+        default:
+            numericValue = 0
+        }
+
+        let clamped = min(max(numericValue, 0), 10)
+        let rounded = round(clamped * 10) / 10
+        if rawValue != nil {
+            log("normalized score from \(String(describing: rawValue)) -> \(rounded)")
+        }
+        return rounded
     }
 
     private static func prepareInputImage(
@@ -305,5 +517,9 @@ actor LocalVLMService {
             width: round(size.width * scale),
             height: round(size.height * scale)
         )
+    }
+
+    private static func log(_ message: String) {
+        print("[LocalVLMService] \(message)")
     }
 }
