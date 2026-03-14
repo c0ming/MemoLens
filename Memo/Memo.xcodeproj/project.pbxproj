@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		16BF0B4C341F9E1CFB20A473 /* Pods_Memo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D588A286440AA4335CE774DC /* Pods_Memo.framework */; };
+		28DD4E669E02EFDC1142675E /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = C54F3FA94484FE962B11F598 /* MLXLMCommon */; };
 		B30BC520482E91FD598CD55B /* Pods_MemoUITests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6254ADB2B66335A4D0159A90 /* Pods_MemoUITests.framework */; };
+		BF9D135EF1C6B445CE004A15 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 924BA479EDA7246571299F58 /* MLXVLM */; };
 		E03B298D38F9EDFB16A72092 /* Pods_MemoTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 73858EDA501917A5DB34830C /* Pods_MemoTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -65,15 +67,11 @@
 		};
 		D41AB9BA2F654E910088038E /* MemoTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MemoTests;
 			sourceTree = "<group>";
 		};
 		D41AB9C42F654E910088038E /* MemoUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = MemoUITests;
 			sourceTree = "<group>";
 		};
@@ -85,6 +83,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				16BF0B4C341F9E1CFB20A473 /* Pods_Memo.framework in Frameworks */,
+				28DD4E669E02EFDC1142675E /* MLXLMCommon in Frameworks */,
+				BF9D135EF1C6B445CE004A15 /* MLXVLM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -117,7 +117,6 @@
 				8ACB2D24F77457F748101EAC /* Pods-MemoUITests.debug.xcconfig */,
 				0D30DCF47E3B6A96AC66086A /* Pods-MemoUITests.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -174,6 +173,10 @@
 				D41AB9A32F654E900088038E /* Memo */,
 			);
 			name = Memo;
+			packageProductDependencies = (
+				C54F3FA94484FE962B11F598 /* MLXLMCommon */,
+				924BA479EDA7246571299F58 /* MLXVLM */,
+			);
 			productName = Memo;
 			productReference = D41AB9A12F654E900088038E /* Memo.app */;
 			productType = "com.apple.product-type.application";
@@ -254,6 +257,9 @@
 			);
 			mainGroup = D41AB9982F654E900088038E;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				714C12FF99C2F4E8FBFFB32F /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D41AB9A22F654E900088038E /* Products */;
 			projectDirPath = "";
@@ -437,6 +443,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.octopus.Memo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -466,6 +474,8 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.octopus.Memo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -509,7 +519,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -572,7 +582,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -707,6 +717,26 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		714C12FF99C2F4E8FBFFB32F /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Vendor/mlx-swift-lm";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		924BA479EDA7246571299F58 /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 714C12FF99C2F4E8FBFFB32F /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+		C54F3FA94484FE962B11F598 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 714C12FF99C2F4E8FBFFB32F /* XCLocalSwiftPackageReference "Vendor/mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D41AB9992F654E900088038E /* Project object */;
 }

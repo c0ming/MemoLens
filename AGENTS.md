@@ -31,6 +31,8 @@ When changing inference behavior, verify both the API and CLI paths. When changi
 - Prefer small, explicit helper functions over large nested blocks.
 - Use `snake_case` for Python variables/functions and lowercase file names such as `qwen_pipeline.py`.
 - Keep frontend code minimal and framework-free; use clear DOM ids like `vl-output` and `service-state`.
+- For iOS native UI work, use `SnapKit` for layout constraints by default.
+- For iOS native UI work, do not use or modify storyboards unless the user explicitly asks for it; prefer programmatic UI.
 - Preserve ASCII unless a file already contains Chinese UI text.
 
 ## Testing Guidelines

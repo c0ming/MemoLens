@@ -19,3 +19,7 @@ build/
 
 # CocoaPods
 Pods/
+
+# Local iOS assets
+Memo/Memo/LocalModels/
+Memo/Memo.xcodeproj/xcuserdata/
