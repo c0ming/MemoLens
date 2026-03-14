@@ -8,6 +8,7 @@ final class PhotoGridCell: UICollectionViewCell {
     private let imageView = UIImageView()
     private let statusContainerView = UIView()
     private let statusLabel = UILabel()
+    private var displayedStatus: PhotoAnalysisStatus?
 
     var representedAssetIdentifier: String?
     var imageRequestID: PHImageRequestID = PHInvalidImageRequestID
@@ -27,6 +28,10 @@ final class PhotoGridCell: UICollectionViewCell {
         representedAssetIdentifier = nil
         imageRequestID = PHInvalidImageRequestID
         imageView.image = nil
+        displayedStatus = nil
+        statusContainerView.layer.removeAllAnimations()
+        statusContainerView.alpha = 1
+        statusContainerView.isHidden = false
         apply(status: .pending)
     }
 
@@ -35,6 +40,12 @@ final class PhotoGridCell: UICollectionViewCell {
     }
 
     func apply(status: PhotoAnalysisStatus) {
+        if status != .completed {
+            statusContainerView.layer.removeAllAnimations()
+            statusContainerView.alpha = 1
+            statusContainerView.isHidden = false
+        }
+
         switch status {
         case .pending:
             statusLabel.text = "待分析"
@@ -49,6 +60,22 @@ final class PhotoGridCell: UICollectionViewCell {
             statusLabel.text = "失败"
             statusContainerView.backgroundColor = UIColor.systemRed.withAlphaComponent(0.84)
         }
+
+        if status == .completed, displayedStatus != .completed {
+            statusContainerView.alpha = 1
+            statusContainerView.isHidden = false
+            UIView.animate(
+                withDuration: 0.28,
+                delay: 0.8,
+                options: [.curveEaseInOut, .beginFromCurrentState]
+            ) { [weak self] in
+                self?.statusContainerView.alpha = 0
+            } completion: { [weak self] _ in
+                self?.statusContainerView.isHidden = true
+            }
+        }
+
+        displayedStatus = status
     }
 
     private func configureUI() {

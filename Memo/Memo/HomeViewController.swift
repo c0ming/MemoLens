@@ -5,6 +5,10 @@ import UIKit
 final class HomeViewController: UIViewController {
     private enum Layout {
         static let spacing: CGFloat = 12
+        static let progressExpandedHeight: CGFloat = 66
+        static let progressAnimationDuration: TimeInterval = 0.28
+        static let progressAnimationOffset: CGFloat = 10
+        static let analysisStartDelayNanoseconds: UInt64 = 3_000_000_000
     }
 
     private let scrollContainerView = UIView()
@@ -23,6 +27,9 @@ final class HomeViewController: UIViewController {
 
     private var assets: [PHAsset] = []
     private var observers: [NSObjectProtocol] = []
+    private var progressContainerHeightConstraint: Constraint?
+    private var delayedAnalysisStartTask: Task<Void, Never>?
+    private var hasTriggeredAnalysisStart = false
 
     init() {
         let layout = UICollectionViewFlowLayout()
@@ -50,6 +57,16 @@ final class HomeViewController: UIViewController {
         reloadState()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        scheduleDelayedAnalysisStartIfNeeded()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        cancelDelayedAnalysisStart()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateItemSize()
@@ -62,6 +79,8 @@ final class HomeViewController: UIViewController {
         progressContainerView.layer.cornerRadius = 16
         progressContainerView.layer.masksToBounds = true
         progressContainerView.isHidden = true
+        progressContainerView.alpha = 0
+        progressContainerView.transform = CGAffineTransform(translationX: 0, y: -Layout.progressAnimationOffset)
 
         progressTitleLabel.text = "分析进度"
         progressTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -117,6 +136,7 @@ final class HomeViewController: UIViewController {
         progressContainerView.snp.makeConstraints { make in
             make.top.equalToSuperview().inset(Layout.spacing)
             make.leading.trailing.equalToSuperview().inset(Layout.spacing)
+            progressContainerHeightConstraint = make.height.equalTo(0).constraint
         }
 
         progressTitleLabel.snp.makeConstraints { make in
@@ -194,23 +214,27 @@ final class HomeViewController: UIViewController {
         if hasAccess {
             updateProgress()
             collectionView.reloadData()
-            analysisCoordinator.start()
+            scheduleDelayedAnalysisStartIfNeeded()
         } else {
-            progressContainerView.isHidden = true
+            cancelDelayedAnalysisStart()
+            hasTriggeredAnalysisStart = false
+            analysisCoordinator.setProcessingEnabled(false)
+            setProgressVisible(false, animated: true)
         }
     }
 
     private func updateProgress() {
         let snapshot = analysisCoordinator.progressSnapshot()
-        progressContainerView.isHidden = !snapshot.isVisible
         guard snapshot.totalCount > 0 else {
             progressView.progress = 0
             progressValueLabel.text = nil
+            setProgressVisible(false, animated: true)
             return
         }
 
         progressValueLabel.text = "\(snapshot.processedCount) / \(snapshot.totalCount)"
         progressView.progress = Float(snapshot.processedCount) / Float(snapshot.totalCount)
+        setProgressVisible(snapshot.isVisible, animated: true)
     }
 
     private func updateItemSize() {
@@ -235,7 +259,8 @@ final class HomeViewController: UIViewController {
             let granted = await libraryService.requestFullAccess()
             if granted {
                 libraryService.refreshAssetsIfAuthorized()
-                analysisCoordinator.start()
+                hasTriggeredAnalysisStart = false
+                scheduleDelayedAnalysisStartIfNeeded()
             }
             self.reloadState()
         }
@@ -304,6 +329,97 @@ extension HomeViewController: UICollectionViewDataSourcePrefetching {
 }
 
 private extension HomeViewController {
+    func scheduleDelayedAnalysisStartIfNeeded() {
+        guard isViewLoaded, view.window != nil else { return }
+        guard libraryService.hasFullAccess else { return }
+        guard !hasTriggeredAnalysisStart else { return }
+        guard delayedAnalysisStartTask == nil else { return }
+
+        analysisCoordinator.start()
+        delayedAnalysisStartTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Layout.analysisStartDelayNanoseconds)
+            } catch {
+                return
+            }
+
+            await MainActor.run {
+                guard let self else { return }
+                guard self.isViewLoaded, self.view.window != nil else {
+                    self.delayedAnalysisStartTask = nil
+                    return
+                }
+                guard self.libraryService.hasFullAccess else {
+                    self.delayedAnalysisStartTask = nil
+                    return
+                }
+
+                self.hasTriggeredAnalysisStart = true
+                self.delayedAnalysisStartTask = nil
+                self.analysisCoordinator.setProcessingEnabled(true)
+                self.updateProgress()
+            }
+        }
+    }
+
+    func cancelDelayedAnalysisStart() {
+        delayedAnalysisStartTask?.cancel()
+        delayedAnalysisStartTask = nil
+    }
+
+    func setProgressVisible(_ visible: Bool, animated: Bool) {
+        let alreadyVisible = !progressContainerView.isHidden && progressContainerView.alpha > 0.99
+        let alreadyHidden = progressContainerView.isHidden || progressContainerView.alpha < 0.01
+
+        if visible, alreadyVisible {
+            progressContainerHeightConstraint?.update(offset: Layout.progressExpandedHeight)
+            progressContainerView.transform = .identity
+            progressContainerView.alpha = 1
+            return
+        }
+
+        if !visible, alreadyHidden {
+            progressContainerView.isHidden = true
+            progressContainerHeightConstraint?.update(offset: 0)
+            progressContainerView.alpha = 0
+            progressContainerView.transform = CGAffineTransform(translationX: 0, y: -Layout.progressAnimationOffset)
+            return
+        }
+
+        let animations = {
+            self.progressContainerHeightConstraint?.update(offset: visible ? Layout.progressExpandedHeight : 0)
+            self.progressContainerView.alpha = visible ? 1 : 0
+            self.progressContainerView.transform = visible
+                ? .identity
+                : CGAffineTransform(translationX: 0, y: -Layout.progressAnimationOffset)
+            self.view.layoutIfNeeded()
+        }
+
+        if visible {
+            progressContainerView.isHidden = false
+        }
+
+        guard animated else {
+            animations()
+            if !visible {
+                progressContainerView.isHidden = true
+            }
+            return
+        }
+
+        UIView.animate(
+            withDuration: Layout.progressAnimationDuration,
+            delay: 0,
+            options: [.curveEaseInOut, .beginFromCurrentState]
+        ) {
+            animations()
+        } completion: { _ in
+            if !visible {
+                self.progressContainerView.isHidden = true
+            }
+        }
+    }
+
     func thumbnailTargetSize() -> CGSize {
         guard let layout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout else {
             return CGSize(width: 200, height: 200)

@@ -21,6 +21,7 @@ final class PhotoAnalysisCoordinator {
     private var rebuildTask: Task<Void, Never>?
     private var observer: NSObjectProtocol?
     private var started = false
+    private var processingEnabled = false
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
 
     private init() {}
@@ -63,7 +64,7 @@ final class PhotoAnalysisCoordinator {
     func progressSnapshot() -> PhotoAnalysisProgressSnapshot {
         let totalCount = libraryService.currentAssets().count
         let processedCount = itemStates.values.filter { $0 == .completed || $0 == .failed }.count
-        let isVisible = totalCount > 0 && (runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty)
+        let isVisible = processingEnabled && totalCount > 0 && (runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty)
         return PhotoAnalysisProgressSnapshot(
             processedCount: processedCount,
             totalCount: totalCount,
@@ -73,6 +74,20 @@ final class PhotoAnalysisCoordinator {
 
     func status(for assetLocalIdentifier: String) -> PhotoAnalysisStatus {
         itemStates[assetLocalIdentifier] ?? .pending
+    }
+
+    func setProcessingEnabled(_ enabled: Bool) {
+        guard processingEnabled != enabled else { return }
+        processingEnabled = enabled
+        print("[PhotoAnalysisCoordinator] processingEnabled=\(enabled)")
+
+        if enabled {
+            start()
+            scheduleRebuild()
+        } else {
+            finishBackgroundTaskIfNeeded()
+            notifyDidUpdate()
+        }
     }
 
     private func scheduleRebuild() {
@@ -119,6 +134,10 @@ final class PhotoAnalysisCoordinator {
 
     private func startProcessingIfNeeded() {
         guard workerTask == nil else { return }
+        guard processingEnabled else {
+            notifyDidUpdate()
+            return
+        }
         guard libraryService.hasFullAccess else {
             notifyDidUpdate()
             return
