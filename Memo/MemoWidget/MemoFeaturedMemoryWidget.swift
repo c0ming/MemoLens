@@ -19,6 +19,7 @@ private struct FeaturedMemoryProvider: TimelineProvider {
                 assetLocalIdentifier: nil,
                 captionLine: "风吹过时，回忆也有了形状。",
                 imageFileName: nil,
+                photoTimestamp: Date().timeIntervalSince1970,
                 updatedAt: Date().timeIntervalSince1970
             ),
             image: nil
@@ -52,6 +53,7 @@ private struct FeaturedMemoryProvider: TimelineProvider {
             assetLocalIdentifier: "simulator-preview",
             captionLine: Self.simulatorCaption,
             imageFileName: MemoryWidgetShared.imageFileName,
+            photoTimestamp: Date().timeIntervalSince1970,
             updatedAt: Date().timeIntervalSince1970
         )
         let image = loadImage(fileName: MemoryWidgetShared.imageFileName, family: family) ?? makeFallbackMockImage(for: family)
@@ -70,6 +72,7 @@ private struct FeaturedMemoryProvider: TimelineProvider {
                 assetLocalIdentifier: nil,
                 captionLine: "还没有可展示的照片",
                 imageFileName: nil,
+                photoTimestamp: nil,
                 updatedAt: Date().timeIntervalSince1970
             )
         }
@@ -223,13 +226,25 @@ private struct FeaturedMemoryWidgetView: View {
                         }
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if let photoDateText {
+                    Text(photoDateText)
+                        .font(dateFont)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, dateBadgeHorizontalPadding)
+                        .padding(.vertical, dateBadgeVerticalPadding)
+                        .background(Color.black.opacity(0.3))
+                        .clipShape(Capsule())
+                        .padding(dateBadgeOuterPadding)
+                }
+            }
             .clipShape(shape)
     }
 
     private var captionSection: some View {
         Text(entry.payload.captionLine)
             .font(captionFont)
-            .foregroundStyle(.primary)
+            .foregroundStyle(Color(red: 0.22, green: 0.22, blue: 0.24))
             .lineLimit(2)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,6 +263,58 @@ private struct FeaturedMemoryWidgetView: View {
         }
     }
 
+    private var dateFont: Font {
+        switch family {
+        case .systemSmall:
+            return .system(size: 9, weight: .semibold, design: .rounded)
+        case .systemMedium:
+            return .system(size: 11, weight: .semibold, design: .rounded)
+        case .systemLarge:
+            return .system(size: 12, weight: .semibold, design: .rounded)
+        default:
+            return .system(size: 11, weight: .semibold, design: .rounded)
+        }
+    }
+
+    private var dateBadgeHorizontalPadding: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 5
+        case .systemMedium:
+            return 8
+        case .systemLarge:
+            return 10
+        default:
+            return 8
+        }
+    }
+
+    private var dateBadgeVerticalPadding: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 3
+        case .systemMedium:
+            return 6
+        case .systemLarge:
+            return 7
+        default:
+            return 6
+        }
+    }
+
+    private var dateBadgeOuterPadding: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 6
+        case .systemMedium:
+            return 10
+        case .systemLarge:
+            return 12
+        default:
+            return 10
+        }
+    }
+
     private var captionFont: Font {
         switch family {
         case .systemSmall:
@@ -260,6 +327,18 @@ private struct FeaturedMemoryWidgetView: View {
             return .system(size: 13, weight: .medium, design: .rounded)
         }
     }
+
+    private var photoDateText: String? {
+        guard let timestamp = entry.payload.photoTimestamp else { return nil }
+        return Self.dateFormatter.string(from: Date(timeIntervalSince1970: timestamp))
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy.MM.dd"
+        return formatter
+    }()
 
 
 }

@@ -10,6 +10,7 @@ struct MemoryWidgetPayload: Codable {
     let assetLocalIdentifier: String?
     let captionLine: String
     let imageFileName: String?
+    let photoTimestamp: TimeInterval?
     let updatedAt: TimeInterval
 }
 

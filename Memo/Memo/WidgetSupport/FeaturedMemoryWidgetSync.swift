@@ -39,6 +39,8 @@ final class FeaturedMemoryWidgetSync {
                 assetLocalIdentifier: selection.record.assetLocalIdentifier,
                 captionLine: selection.captionLine,
                 imageFileName: MemoryWidgetShared.imageFileName,
+                photoTimestamp: selection.asset.creationDate?.timeIntervalSince1970
+                    ?? selection.asset.modificationDate?.timeIntervalSince1970,
                 updatedAt: Date().timeIntervalSince1970
             )
             try writePayload(payload)
@@ -70,6 +72,7 @@ final class FeaturedMemoryWidgetSync {
                 assetLocalIdentifier: "simulator-preview",
                 captionLine: Self.simulatorCaption,
                 imageFileName: MemoryWidgetShared.imageFileName,
+                photoTimestamp: Date().timeIntervalSince1970,
                 updatedAt: Date().timeIntervalSince1970
             )
             try writePayload(payload)
@@ -178,6 +181,7 @@ final class FeaturedMemoryWidgetSync {
             assetLocalIdentifier: nil,
             captionLine: "还没有可展示的照片",
             imageFileName: nil,
+            photoTimestamp: nil,
             updatedAt: Date().timeIntervalSince1970
         )
         try writePayload(payload)
