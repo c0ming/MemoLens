@@ -25,6 +25,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
     private var runStartedAt = Date()
     private var latestMetrics: VLMRunMetrics?
     private var selectedOriginalPixelSize: CGSize?
+    private var selectedAssetIdentifier: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -215,8 +216,17 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
         Task { [weak self] in
             guard let self else { return }
             do {
+                let ocrPreparationStartedAt = Date()
+                let ocrImageData = try await self.resolveOCRImageData(fallbackImage: selectedImage)
+                let ocrPreparationDuration = Date().timeIntervalSince(ocrPreparationStartedAt)
+                Self.log(
+                    "runVLTest OCR preparation complete, bytes=\(ocrImageData.count), "
+                        + "durationMs=\(Int((ocrPreparationDuration * 1000).rounded()))"
+                )
                 let result = try await LocalVLMService.shared.streamImage(
                     selectedImageData,
+                    ocrImageData: ocrImageData,
+                    ocrPreparationDuration: ocrPreparationDuration,
                     userInterfaceIdiom: self.traitCollection.userInterfaceIdiom,
                     originalPixelSize: self.selectedOriginalPixelSize,
                     onLoadProgress: { [weak self] progress in
@@ -360,6 +370,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
             Self.log("picker returned no selection")
             return
         }
+        selectedAssetIdentifier = result.assetIdentifier
 
         statusLabel.text = "正在读取所选照片..."
         outputView.text = "这里会显示 VL 输出。"
@@ -387,6 +398,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
             } catch {
                 await MainActor.run {
                     Self.log("loadSelectedPhoto failed: \(error.localizedDescription)")
+                    self.selectedAssetIdentifier = nil
                     self.selectedOriginalPixelSize = nil
                     self.imageView.image = nil
                     self.placeholderLabel.isHidden = false
@@ -493,6 +505,30 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
                 )
             }
         }
+    }
+
+    private func resolveOCRImageData(fallbackImage: UIImage) async throws -> Data {
+        if let selectedAssetIdentifier {
+            let assets = PHAsset.fetchAssets(withLocalIdentifiers: [selectedAssetIdentifier], options: nil)
+            if let asset = assets.firstObject {
+                Self.log("resolveOCRImageData from asset, assetIdentifier=\(selectedAssetIdentifier)")
+                do {
+                    return try await PhotoLibraryService.shared.requestOCRImageData(for: asset)
+                } catch {
+                    Self.log("resolveOCRImageData asset request failed: \(error.localizedDescription), falling back to in-memory image")
+                }
+            }
+            Self.log("resolveOCRImageData asset lookup failed, falling back to in-memory image")
+        }
+
+        if let pngData = fallbackImage.pngData(), !pngData.isEmpty {
+            Self.log("resolveOCRImageData via pngData, bytes=\(pngData.count)")
+            return pngData
+        }
+
+        let jpegData = fallbackImage.jpegData(compressionQuality: 1.0) ?? fallbackImage.normalizedJPEGData()
+        Self.log("resolveOCRImageData via jpegData fallback, bytes=\(jpegData.count)")
+        return jpegData
     }
 }
 

@@ -177,6 +177,36 @@ final class PhotoLibraryService: NSObject, PHPhotoLibraryChangeObserver {
         }
     }
 
+    func requestOCRImageData(for asset: PHAsset) async throws -> Data {
+        let requestOptions = PHImageRequestOptions()
+        requestOptions.deliveryMode = .highQualityFormat
+        requestOptions.resizeMode = .none
+        requestOptions.isNetworkAccessAllowed = true
+        requestOptions.isSynchronous = false
+        requestOptions.version = .current
+
+        print("[PhotoLibraryService] requestOCRImageData asset=\(asset.localIdentifier) original=\(asset.pixelWidth)x\(asset.pixelHeight)")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            imageManager.requestImageDataAndOrientation(for: asset, options: requestOptions) { data, _, _, info in
+                if let error = info?[PHImageErrorKey] as? Error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                if (info?[PHImageCancelledKey] as? Bool) == true {
+                    continuation.resume(throwing: LocalVLMError.invalidSelectedImage)
+                    return
+                }
+                guard let data, !data.isEmpty else {
+                    continuation.resume(throwing: LocalVLMError.invalidSelectedImage)
+                    return
+                }
+                print("[PhotoLibraryService] requestOCRImageData bytes=\(data.count)")
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
     nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
         Task { @MainActor in
             self.refreshAssetsIfAuthorized()

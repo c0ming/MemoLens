@@ -3,6 +3,7 @@ import MLX
 import MLXLMCommon
 import MLXVLM
 import UIKit
+import Vision
 
 struct ImageSizingInfo: Sendable {
     let originalWidth: Int
@@ -20,6 +21,14 @@ struct VLMRunMetrics: Sendable {
     let totalTime: TimeInterval
 }
 
+struct OCRResult: Sendable {
+    let lines: [String]
+    let fullText: String
+    let preparationDuration: TimeInterval
+    let recognitionDuration: TimeInterval
+    let totalDuration: TimeInterval
+}
+
 enum LocalVLMError: LocalizedError {
     case missingModelDirectory
     case invalidSelectedImage
@@ -28,7 +37,7 @@ enum LocalVLMError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingModelDirectory:
-            return "未找到 app bundle 中的 2B VL 模型文件。"
+            return "未找到 app bundle 中的 VL 模型文件。"
         case .invalidSelectedImage:
             return "无法读取所选照片。"
         case .simulatorUnsupported:
@@ -44,16 +53,38 @@ actor LocalVLMService {
     private static let padMaxInputLongEdge: CGFloat = 2016
     private static let promptResourceName = "vl_prompt"
     private static let memoryCacheLimitBytes = 32 * 1024 * 1024
+    private static let ocrRecognitionLanguages = ["zh-Hans", "en-US"]
     private static let memoryScoreWeights: [String: Double] = [
-        "memorability": 0.18,
-        "story": 0.15,
-        "relationship": 0.14,
-        "emotion": 0.12,
-        "anchors": 0.10,
-        "life_stage": 0.10,
-        "revisit_value": 0.09,
-        "warmth": 0.07,
-        "uniqueness": 0.05,
+        "mb": 0.18,
+        "st": 0.15,
+        "rl": 0.14,
+        "em": 0.12,
+        "an": 0.10,
+        "ls": 0.10,
+        "rv": 0.09,
+        "wm": 0.07,
+        "un": 0.05,
+    ]
+    private static let scoreKeyAliases: [String: [String]] = [
+        "mb": ["mb", "memorability"],
+        "em": ["em", "emotion"],
+        "st": ["st", "story"],
+        "an": ["an", "anchors"],
+        "rl": ["rl", "relationship"],
+        "ls": ["ls", "life_stage"],
+        "un": ["un", "uniqueness"],
+        "wm": ["wm", "warmth"],
+        "rv": ["rv", "revisit_value"],
+    ]
+    private static let topLevelKeyAliases: [String: [String]] = [
+        "ob": ["ob", "observation", "image_type", "sc", "scene"],
+        "hh": ["hh", "has_human"],
+        "ma": ["ma", "memorability_analysis", "dimension_scores"],
+        "cl": ["cl", "caption_line"],
+        "tg": ["tg", "tags"],
+        "ti": ["ti", "text_in_image"],
+        "ms": ["ms", "memory_score"],
+        "oc": ["oc", "ocr"],
     ]
     private static let hasHumanWeight = 0.10
     private let modelFolderName = "Qwen3-VL-2B-Instruct-4bit"
@@ -69,41 +100,39 @@ actor LocalVLMService {
 
     你需要完成 4 件事：
 
-    1. 用一句简短中文说明这是什么图片。
-    不要套用固定类别，如果无法准确概括，就尽量如实描述。
+    1. 用一句简短中文描述图片可见内容，并让这句话适合后续搜索。
+    这句话既要忠于画面，也要尽量点出可检索的对象或场景类别。
+    例如如果明显是一张身份证、菜单、聊天截图、证件照、宠物照、旅行合影，就直接说出来。
+    即使图片里没有这些文字，只要画面能判断出来，也要在描述里体现。
 
     字段：
-    "image_type": "一句简短中文"
+    "ob": "一句适合搜索的简短中文描述"
 
     2. 评估这张图片的可回忆度。
     “可回忆度”指这张图片在未来是否容易唤起具体、鲜明、可讲述的个人回忆。
     它不是摄影质量分，也不是美观分。
 
     请从以下 4 个维度评分，每项 0-10 分：
-    - memorability：整体是否容易让人记住
-    - emotion：是否有明显情绪或氛围
-    - story：是否像一个可讲述的时刻
-    - anchors：是否有具体细节可作为回忆锚点，如人物、动作、地点、物品、文字
+    - mb：整体是否容易让人记住
+    - em：是否有明显情绪或氛围
+    - st：是否像一个可讲述的时刻
+    - an：是否有具体细节可作为回忆锚点，如人物、动作、地点、物品、文字
 
-    再用一句话解释原因。
+    "ma": {
+      "mb": 0,
+      "em": 0,
+      "st": 0,
+      "an": 0
+    }
 
-    字段：
-    "dimension_scores": {
-      "memorability": 0,
-      "emotion": 0,
-      "story": 0,
-      "anchors": 0
-    },
-    "memory_reason": "一句话说明为什么这个分数高或低"
-
-    不要输出 memory_score，总分会由系统在你返回 dimension_scores 后自动计算，并补回最终结果。
+    不要输出 ms，总分会由系统在你返回 ma 后自动计算，并补回最终结果。
 
     3. 给图片打 tag。
     请输出 3 到 8 个简短中文 tag。
     tag 要尽量具体，优先基于画面中真实可见的内容，不要空泛，不要为了好看而编造。
 
     字段：
-    "tags": ["", "", ""]
+    "tg": ["", "", ""]
 
     4. 给图片写一句题注。
     要求：
@@ -116,20 +145,19 @@ actor LocalVLMService {
     - 不要用“这张照片里……”“画面中……”这类开头
 
     字段：
-    "caption_line": "一句题注"
+    "cl": "一句题注"
 
     请严格输出 JSON，格式如下：
     {
-      "image_type": "",
-      "dimension_scores": {
-        "memorability": 0,
-        "emotion": 0,
-        "story": 0,
-        "anchors": 0
+      "ob": "",
+      "ma": {
+        "mb": 0,
+        "em": 0,
+        "st": 0,
+        "an": 0
       },
-      "memory_reason": "",
-      "tags": [],
-      "caption_line": ""
+      "tg": [],
+      "cl": ""
     }
     """
 
@@ -160,6 +188,8 @@ actor LocalVLMService {
 
     func streamImage(
         _ imageData: Data,
+        ocrImageData: Data? = nil,
+        ocrPreparationDuration: TimeInterval = 0,
         userInterfaceIdiom: UIUserInterfaceIdiom,
         originalPixelSize: CGSize? = nil,
         onLoadProgress: @escaping @Sendable (Double) async -> Void,
@@ -238,7 +268,30 @@ actor LocalVLMService {
             await finishActiveSession(session)
             Self.log("session cleared, MLX cache cleared")
             print("")
-            let finalOutput = Self.augmentedOutput(from: output)
+            let ocrResult: OCRResult?
+            do {
+                let ocrSourceData = ocrImageData ?? imageData
+                ocrResult = try Self.recognizeText(in: ocrSourceData, preparationDuration: ocrPreparationDuration)
+                if let ocrResult {
+                    Self.log(
+                        "ocr complete, sourceBytes=\(ocrSourceData.count), lines=\(ocrResult.lines.count), "
+                            + "chars=\(ocrResult.fullText.count), preparationMs=\(Int((ocrResult.preparationDuration * 1000).rounded())), "
+                            + "recognitionMs=\(Int((ocrResult.recognitionDuration * 1000).rounded())), "
+                            + "totalMs=\(Int((ocrResult.totalDuration * 1000).rounded()))"
+                    )
+                    print("[LocalVLMService] OCR lines: \(ocrResult.lines)")
+                    print("[LocalVLMService] OCR text:\n\(ocrResult.fullText)")
+                    print(
+                        "[LocalVLMService] OCR timing: preparation=\(Int((ocrResult.preparationDuration * 1000).rounded()))ms, "
+                            + "recognition=\(Int((ocrResult.recognitionDuration * 1000).rounded()))ms, "
+                            + "total=\(Int((ocrResult.totalDuration * 1000).rounded()))ms"
+                    )
+                }
+            } catch {
+                ocrResult = nil
+                Self.log("ocr failed: \(error.localizedDescription)")
+            }
+            let finalOutput = Self.augmentedOutput(from: output, ocrResult: ocrResult)
             Self.log("streamImage completed, rawOutputChars=\(output.count), finalOutputChars=\(finalOutput.count)")
             return finalOutput
         } catch is CancellationError {
@@ -386,7 +439,7 @@ actor LocalVLMService {
         }
     }
 
-    private static func augmentedOutput(from rawOutput: String) -> String {
+    private static func augmentedOutput(from rawOutput: String, ocrResult: OCRResult?) -> String {
         log("augment start, rawOutputChars=\(rawOutput.count)")
         guard
             let cleanedOutput = cleanedJSONString(from: rawOutput),
@@ -400,59 +453,68 @@ actor LocalVLMService {
         log("cleaned JSON chars=\(cleanedOutput.count)")
 
         let analysisKey: String
-        if root["memorability_analysis"] is [String: Any] {
+        if root["ma"] is [String: Any] {
+            analysisKey = "ma"
+        } else if root["memorability_analysis"] is [String: Any] {
             analysisKey = "memorability_analysis"
         } else if root["dimension_scores"] is [String: Any] {
             analysisKey = "dimension_scores"
         } else {
-            log("augment skipped, no memorability_analysis or dimension_scores key")
+            log("augment skipped, no ma or memorability_analysis or dimension_scores key")
             return rawOutput
         }
         log("using analysisKey=\(analysisKey)")
 
-        guard var scores = root[analysisKey] as? [String: Any] else {
+        guard let rawScores = root[analysisKey] as? [String: Any] else {
             log("augment skipped, analysis payload is not dictionary")
             return rawOutput
         }
+        var scores = rawScores
 
         var weightedScore = 0.0
         var totalWeight = 0.0
+        var normalizedScores: [String: Any] = [:]
 
         for (key, weight) in memoryScoreWeights {
-            let value = normalizedScoreValue(from: scores[key])
-            scores[key] = value
+            let value = normalizedScoreValue(from: rawScoreValue(for: key, in: scores))
+            normalizedScores[key] = value
             weightedScore += value * weight
             totalWeight += weight
             log("score[\(key)]=\(value), weight=\(weight)")
         }
 
         for (key, value) in scores {
-            guard memoryScoreWeights[key] == nil else { continue }
-            scores[key] = normalizedScoreValue(from: value)
+            guard normalizedScores[key] == nil else { continue }
+            guard !scoreKeyAliases.values.flatMap({ $0 }).contains(key) else { continue }
+            normalizedScores[key] = normalizedScoreValue(from: value)
         }
 
-        root[analysisKey] = scores
+        root["ma"] = normalizedScores
+        root.removeValue(forKey: "memorability_analysis")
+        root.removeValue(forKey: "dimension_scores")
 
-        if let hasHuman = root["has_human"] as? Bool {
+        let rawHasHuman = rawTopLevelValue(for: "hh", in: root)
+        if let hasHuman = rawHasHuman as? Bool {
             let humanScore = hasHuman ? 8.0 : 4.0
             weightedScore += humanScore * hasHumanWeight
             totalWeight += hasHumanWeight
-            log("has_human(bool)=\(hasHuman), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
-        } else if let hasHumanNumber = root["has_human"] as? NSNumber {
+            root["hh"] = hasHuman
+            log("hh(bool)=\(hasHuman), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+        } else if let hasHumanNumber = rawHasHuman as? NSNumber {
             let humanScore = hasHumanNumber.boolValue ? 8.0 : 4.0
             weightedScore += humanScore * hasHumanWeight
             totalWeight += hasHumanWeight
-            root["has_human"] = hasHumanNumber.boolValue
-            log("has_human(number)=\(hasHumanNumber), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
-        } else if let hasHumanString = root["has_human"] as? String {
+            root["hh"] = hasHumanNumber.boolValue
+            log("hh(number)=\(hasHumanNumber), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+        } else if let hasHumanString = rawHasHuman as? String {
             let normalized = ["true", "1", "yes"].contains(hasHumanString.lowercased())
             let humanScore = normalized ? 8.0 : 4.0
             weightedScore += humanScore * hasHumanWeight
             totalWeight += hasHumanWeight
-            root["has_human"] = normalized
-            log("has_human(string)=\(hasHumanString), normalized=\(normalized), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
+            root["hh"] = normalized
+            log("hh(string)=\(hasHumanString), normalized=\(normalized), mappedScore=\(humanScore), weight=\(hasHumanWeight)")
         } else {
-            log("has_human missing, no additional weight applied")
+            log("hh missing, no additional weight applied")
         }
 
         guard totalWeight > 0 else {
@@ -461,8 +523,10 @@ actor LocalVLMService {
         }
 
         let roundedMemoryScore = round((weightedScore / totalWeight) * 10) / 10
-        root["memory_score"] = roundedMemoryScore
+        root["ms"] = roundedMemoryScore
         log("computed memory_score=\(roundedMemoryScore), weightedScore=\(weightedScore), totalWeight=\(totalWeight)")
+        mergeOCRResult(ocrResult, into: &root)
+        normalizeTopLevelKeys(in: &root)
 
         guard
             let normalizedData = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]),
@@ -474,6 +538,66 @@ actor LocalVLMService {
 
         log("augment complete, finalJSONChars=\(normalizedString.count)")
         return normalizedString
+    }
+
+    private static func mergeOCRResult(_ ocrResult: OCRResult?, into root: inout [String: Any]) {
+        let lines = ocrResult?.lines ?? []
+        let fullText = ocrResult?.fullText ?? ""
+        let durationMs = Int(((ocrResult?.totalDuration ?? 0) * 1000).rounded())
+        let preparationMs = Int(((ocrResult?.preparationDuration ?? 0) * 1000).rounded())
+        let recognitionMs = Int(((ocrResult?.recognitionDuration ?? 0) * 1000).rounded())
+
+        root["ti"] = lines
+        root["oc"] = [
+            "tx": fullText,
+            "lc": lines.count,
+            "dm": durationMs,
+            "pm": preparationMs,
+            "rm": recognitionMs,
+            "en": "vision_vnrecognizetextrequest",
+        ]
+        log(
+            "merged OCR result, lines=\(lines.count), chars=\(fullText.count), "
+                + "preparationMs=\(preparationMs), recognitionMs=\(recognitionMs), totalMs=\(durationMs)"
+        )
+    }
+
+    private static func recognizeText(in imageData: Data, preparationDuration: TimeInterval) throws -> OCRResult {
+        let startedAt = Date()
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.recognitionLanguages = ocrRecognitionLanguages
+        request.minimumTextHeight = 0
+
+        let handler = VNImageRequestHandler(data: imageData, options: [:])
+        try handler.perform([request])
+
+        let observations = request.results ?? []
+        var lines: [String] = []
+        var seen = Set<String>()
+
+        for observation in observations {
+            guard let candidate = observation.topCandidates(1).first else { continue }
+            let candidateLines = candidate.string
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            for line in candidateLines where seen.insert(line).inserted {
+                lines.append(line)
+            }
+        }
+
+        let fullText = lines.joined(separator: "\n")
+        let recognitionDuration = Date().timeIntervalSince(startedAt)
+        return OCRResult(
+            lines: lines,
+            fullText: fullText,
+            preparationDuration: preparationDuration,
+            recognitionDuration: recognitionDuration,
+            totalDuration: preparationDuration + recognitionDuration
+        )
     }
 
     private static func cleanedJSONString(from rawOutput: String) -> String? {
@@ -519,6 +643,84 @@ actor LocalVLMService {
             log("normalized score from \(String(describing: rawValue)) -> \(rounded)")
         }
         return rounded
+    }
+
+    private static func rawScoreValue(for key: String, in scores: [String: Any]) -> Any? {
+        for alias in scoreKeyAliases[key] ?? [key] {
+            if let value = scores[alias] {
+                if alias != key {
+                    log("mapped score alias \(alias) -> \(key)")
+                }
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func rawTopLevelValue(for key: String, in root: [String: Any]) -> Any? {
+        for alias in topLevelKeyAliases[key] ?? [key] {
+            if let value = root[alias] {
+                if alias != key {
+                    log("mapped top-level alias \(alias) -> \(key)")
+                }
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func normalizeTopLevelKeys(in root: inout [String: Any]) {
+        if let observationDescription = normalizedObservationDescription(from: root) {
+            root["ob"] = observationDescription
+        }
+
+        for (shortKey, aliases) in topLevelKeyAliases {
+            guard let value = rawTopLevelValue(for: shortKey, in: root) else { continue }
+            root[shortKey] = value
+            for alias in aliases where alias != shortKey {
+                root.removeValue(forKey: alias)
+            }
+        }
+
+        root.removeValue(forKey: "mr")
+        root.removeValue(forKey: "memory_reason")
+    }
+
+    private static func normalizedObservationDescription(from root: [String: Any]) -> String? {
+        let observation = stringValue(from: root["ob"])
+            ?? stringValue(from: root["observation"])
+            ?? stringValue(from: root["image_type"])
+        let scene = stringValue(from: root["sc"]) ?? stringValue(from: root["scene"])
+
+        switch (observation, scene) {
+        case let (.some(observation), .some(scene)):
+            if observation.contains(scene) || scene.contains(observation) {
+                return observation.count >= scene.count ? observation : scene
+            }
+            return "\(observation)，\(scene)"
+        case let (.some(observation), nil):
+            return observation
+        case let (nil, .some(scene)):
+            return scene
+        default:
+            return nil
+        }
+    }
+
+    private static func stringValue(from rawValue: Any?) -> String? {
+        guard let rawValue else { return nil }
+        let string: String
+        switch rawValue {
+        case let stringValue as String:
+            string = stringValue
+        case let number as NSNumber:
+            string = number.stringValue
+        default:
+            return nil
+        }
+
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func prepareInputImage(

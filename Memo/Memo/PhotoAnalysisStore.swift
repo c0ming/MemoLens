@@ -32,6 +32,7 @@ actor PhotoAnalysisStore {
     func loadAllRecords() async -> [String: PhotoAnalysisRecord] {
         do {
             let directoryURL = try recordsDirectoryURL()
+            print("[PhotoAnalysisStore] loading records from \(directoryURL.path)")
             let fileURLs = try FileManager.default.contentsOfDirectory(
                 at: directoryURL,
                 includingPropertiesForKeys: nil,
@@ -60,7 +61,7 @@ actor PhotoAnalysisStore {
             let fileURL = try recordFileURL(for: record.assetLocalIdentifier)
             let data = try encoder.encode(record)
             try data.write(to: fileURL, options: [.atomic])
-            print("[PhotoAnalysisStore] saved record for \(record.assetLocalIdentifier)")
+            print("[PhotoAnalysisStore] saved record for \(record.assetLocalIdentifier) at \(fileURL.path)")
         } catch {
             print("[PhotoAnalysisStore] save failed for \(record.assetLocalIdentifier): \(error.localizedDescription)")
         }
@@ -76,6 +77,7 @@ actor PhotoAnalysisStore {
         let appURL = baseURL.appendingPathComponent("Memo", isDirectory: true)
         let directoryURL = appURL.appendingPathComponent(directoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        print("[PhotoAnalysisStore] records directory: \(directoryURL.path)")
         return directoryURL
     }
 

@@ -163,8 +163,8 @@ final class FeaturedMemoryWidgetSync {
             return nil
         }
 
-        return (object["caption_line"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let caption = (object["cl"] as? String) ?? (object["caption_line"] as? String)
+        return caption?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func writePayload(_ payload: MemoryWidgetPayload) throws {

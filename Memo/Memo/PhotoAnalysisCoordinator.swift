@@ -220,9 +220,24 @@ final class PhotoAnalysisCoordinator {
             userInterfaceIdiom: UIDevice.current.userInterfaceIdiom
         )
         let imageData = selectedPhoto.image.normalizedJPEGData()
+        let ocrPreparationStartedAt = Date()
+        let ocrImageData: Data?
+        do {
+            ocrImageData = try await libraryService.requestOCRImageData(for: asset)
+        } catch {
+            ocrImageData = nil
+            print("[PhotoAnalysisCoordinator] requestOCRImageData failed for \(identifier): \(error.localizedDescription)")
+        }
+        let ocrPreparationDuration = Date().timeIntervalSince(ocrPreparationStartedAt)
+        print(
+            "[PhotoAnalysisCoordinator] OCR preparation asset=\(identifier), bytes=\(ocrImageData?.count ?? 0), "
+                + "durationMs=\(Int((ocrPreparationDuration * 1000).rounded()))"
+        )
 
         let resultJSONString = try await LocalVLMService.shared.streamImage(
             imageData,
+            ocrImageData: ocrImageData,
+            ocrPreparationDuration: ocrPreparationDuration,
             userInterfaceIdiom: UIDevice.current.userInterfaceIdiom,
             originalPixelSize: selectedPhoto.originalPixelSize,
             onLoadProgress: { _ in },
@@ -325,6 +340,14 @@ final class PhotoAnalysisCoordinator {
             let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
+        }
+
+        if let number = jsonObject["ms"] as? NSNumber {
+            return number.doubleValue
+        }
+
+        if let string = jsonObject["ms"] as? String {
+            return Double(string)
         }
 
         if let number = jsonObject["memory_score"] as? NSNumber {
