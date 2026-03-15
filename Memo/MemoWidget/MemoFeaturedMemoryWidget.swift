@@ -181,13 +181,26 @@ private struct FeaturedMemoryWidgetView: View {
         VStack(alignment: .leading, spacing: 0) {
             imageSection
             captionSection
-                .padding(.top, 12)
+                .padding(.top, widgetPadding)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(16)
+        .padding(widgetPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             Color(uiColor: .secondarySystemBackground)
+        }
+    }
+
+    private var widgetPadding: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 12
+        case .systemMedium:
+            return 16
+        case .systemLarge:
+            return 20
+        default:
+            return 16
         }
     }
 
