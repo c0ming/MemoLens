@@ -16,6 +16,7 @@ final class PhotoAnalysisCoordinator {
 
     private let libraryService = PhotoLibraryService.shared
     private let store = PhotoAnalysisStore()
+    private let widgetSync = FeaturedMemoryWidgetSync.shared
 
     private var itemStates: [String: PhotoAnalysisStatus] = [:]
     private var pendingAssetIdentifiers: [String] = []
@@ -25,6 +26,7 @@ final class PhotoAnalysisCoordinator {
     private var observer: NSObjectProtocol?
     private var started = false
     private var processingEnabled = false
+    private var isSceneActive = true
     private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
     private var estimatedSecondsPerItem: TimeInterval = defaultEstimatedSecondsPerItem
 
@@ -54,17 +56,19 @@ final class PhotoAnalysisCoordinator {
     }
 
     func sceneDidBecomeActive() {
+        isSceneActive = true
         finishBackgroundTaskIfNeeded()
         start()
         scheduleRebuild()
     }
 
+    func sceneWillResignActive() {
+        isSceneActive = false
+        pauseForBackground()
+    }
+
     func sceneDidEnterBackground() {
-        guard runningAssetIdentifier != nil || !pendingAssetIdentifiers.isEmpty else {
-            finishBackgroundTaskIfNeeded()
-            return
-        }
-        beginBackgroundTaskIfNeeded()
+        finishBackgroundTaskIfNeeded()
     }
 
     func progressSnapshot() -> PhotoAnalysisProgressSnapshot {
@@ -137,6 +141,7 @@ final class PhotoAnalysisCoordinator {
             self.runningAssetIdentifier = nil
         }
 
+        await widgetSync.refresh(records: Array(records.values), assets: assets)
         notifyDidUpdate()
         startProcessingIfNeeded()
     }
@@ -144,6 +149,10 @@ final class PhotoAnalysisCoordinator {
     private func startProcessingIfNeeded() {
         guard workerTask == nil else { return }
         guard processingEnabled else {
+            notifyDidUpdate()
+            return
+        }
+        guard isSceneActive else {
             notifyDidUpdate()
             return
         }
@@ -157,7 +166,6 @@ final class PhotoAnalysisCoordinator {
             return
         }
 
-        beginBackgroundTaskIfNeeded()
         workerTask = Task { [weak self] in
             guard let self else { return }
             await self.processQueue()
@@ -166,8 +174,15 @@ final class PhotoAnalysisCoordinator {
 
     private func processQueue() async {
         while let nextIdentifier = nextPendingAssetIdentifier() {
+            if Task.isCancelled {
+                break
+            }
             do {
+                try Task.checkCancellation()
                 try await analyzeAsset(withLocalIdentifier: nextIdentifier)
+            } catch is CancellationError {
+                print("[PhotoAnalysisCoordinator] processing cancelled")
+                break
             } catch {
                 print("[PhotoAnalysisCoordinator] analyze failed for \(nextIdentifier): \(error.localizedDescription)")
                 await markFailure(for: nextIdentifier, errorMessage: error.localizedDescription)
@@ -234,6 +249,8 @@ final class PhotoAnalysisCoordinator {
         runningAssetIdentifier = nil
         itemStates[identifier] = .completed
         estimatedSecondsPerItem = Self.updatedEstimatedDuration(current: estimatedSecondsPerItem, sample: analysisDuration)
+        let records = await store.loadAllRecords()
+        await widgetSync.refresh(records: Array(records.values), assets: libraryService.currentAssets())
         print("[PhotoAnalysisCoordinator] analyzed \(identifier)")
         notifyDidUpdate()
     }
@@ -255,11 +272,30 @@ final class PhotoAnalysisCoordinator {
         await store.save(record)
         runningAssetIdentifier = nil
         itemStates[identifier] = .failed
+        let records = await store.loadAllRecords()
+        await widgetSync.refresh(records: Array(records.values), assets: libraryService.currentAssets())
         notifyDidUpdate()
     }
 
     private func notifyDidUpdate() {
         NotificationCenter.default.post(name: .photoAnalysisCoordinatorDidUpdate, object: nil)
+    }
+
+    private func pauseForBackground() {
+        workerTask?.cancel()
+        workerTask = nil
+        rebuildTask?.cancel()
+
+        if let runningAssetIdentifier {
+            if !pendingAssetIdentifiers.contains(runningAssetIdentifier) {
+                pendingAssetIdentifiers.insert(runningAssetIdentifier, at: 0)
+            }
+            itemStates[runningAssetIdentifier] = .pending
+            self.runningAssetIdentifier = nil
+        }
+
+        finishBackgroundTaskIfNeeded()
+        notifyDidUpdate()
     }
 
     private func beginBackgroundTaskIfNeeded() {

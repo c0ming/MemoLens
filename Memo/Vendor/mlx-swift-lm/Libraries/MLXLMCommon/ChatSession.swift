@@ -30,6 +30,7 @@ public final class ChatSession {
     private let model: ModelContainer
     public var instructions: String?
     private let cache: SerialAccessContainer<Cache>
+    private let activeGenerationTask: SerialAccessContainer<Task<Void, Never>?>
     public var processing: UserInput.Processing
     public var generateParameters: GenerateParameters
     public var additionalContext: [String: any Sendable]?
@@ -54,6 +55,7 @@ public final class ChatSession {
         self.model = model
         self.instructions = instructions
         self.cache = .init(.empty)
+        self.activeGenerationTask = .init(nil)
         self.processing = processing
         self.generateParameters = generateParameters
         self.tools = tools
@@ -80,6 +82,7 @@ public final class ChatSession {
         self.model = ModelContainer(context: model)
         self.instructions = instructions
         self.cache = .init(.empty)
+        self.activeGenerationTask = .init(nil)
         self.processing = processing
         self.generateParameters = generateParameters
         self.tools = tools
@@ -108,6 +111,7 @@ public final class ChatSession {
         self.model = model
         self.instructions = instructions
         self.cache = .init(.history(history))
+        self.activeGenerationTask = .init(nil)
         self.processing = processing
         self.generateParameters = generateParameters
         self.tools = tools
@@ -137,6 +141,7 @@ public final class ChatSession {
         self.model = ModelContainer(context: model)
         self.instructions = instructions
         self.cache = .init(.history(history))
+        self.activeGenerationTask = .init(nil)
         self.processing = processing
         self.generateParameters = generateParameters
         self.tools = tools
@@ -239,9 +244,16 @@ public final class ChatSession {
 
         let task = Task {
             [
-                model,
+                model, activeGenerationTask,
                 instructions, processing, tools, additionalContext, cache, generateParameters
             ] in
+            defer {
+                Task {
+                    await activeGenerationTask.update { task in
+                        task = nil
+                    }
+                }
+            }
             do {
                 try await cache.update { cache in
 
@@ -328,8 +340,19 @@ public final class ChatSession {
             }
         }
 
+        Task {
+            await self.activeGenerationTask.update { activeTask in
+                activeTask = task
+            }
+        }
+
         continuation.onTermination = { _ in
             task.cancel()
+            Task {
+                await self.activeGenerationTask.update { activeTask in
+                    activeTask = nil
+                }
+            }
         }
 
         return stream
@@ -358,6 +381,13 @@ public final class ChatSession {
     public func clear() async {
         await cache.update { cache in
             cache = .empty
+        }
+    }
+
+    /// Cancel the active generation task, if one is running.
+    public func cancel() async {
+        await activeGenerationTask.read { task in
+            task?.cancel()
         }
     }
 

@@ -23,6 +23,7 @@ struct VLMRunMetrics: Sendable {
 enum LocalVLMError: LocalizedError {
     case missingModelDirectory
     case invalidSelectedImage
+    case simulatorUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -30,6 +31,8 @@ enum LocalVLMError: LocalizedError {
             return "未找到 app bundle 中的 2B VL 模型文件。"
         case .invalidSelectedImage:
             return "无法读取所选照片。"
+        case .simulatorUnsupported:
+            return "iOS 模拟器不支持 MLX 本地 VL 推理，请用真机验证。"
         }
     }
 }
@@ -56,6 +59,9 @@ actor LocalVLMService {
     private let modelFolderName = "Qwen3-VL-2B-Instruct-4bit"
     private var modelContainer: ModelContainer?
     private var modelContainerTask: Task<ModelContainer, Error>?
+    private var activeSession: ChatSession?
+    private var cancelledSession: ChatSession?
+    private var isApplicationActive = true
     private let prompt: String
 
     private static let defaultPrompt = """
@@ -128,13 +134,28 @@ actor LocalVLMService {
     """
 
     init() {
+        #if !targetEnvironment(simulator)
         Memory.cacheLimit = Self.memoryCacheLimitBytes
+        #endif
         self.prompt = Self.loadPrompt()
         Self.log("initialized, cacheLimit=\(Self.memoryCacheLimitBytes) bytes")
     }
 
     nonisolated static func preferredPhotoRequestLongEdge(for idiom: UIUserInterfaceIdiom) -> CGFloat {
         maxInputLongEdge(for: idiom)
+    }
+
+    func applicationDidBecomeActive() {
+        guard !isApplicationActive else { return }
+        isApplicationActive = true
+        Self.log("applicationDidBecomeActive")
+    }
+
+    func applicationWillResignActive() async {
+        guard isApplicationActive else { return }
+        isApplicationActive = false
+        Self.log("applicationWillResignActive")
+        await cancelActiveRun(synchronizeCleanup: false)
     }
 
     func streamImage(
@@ -146,8 +167,13 @@ actor LocalVLMService {
         onChunk: @escaping @Sendable (String) async -> Void,
         onComplete: @escaping @Sendable (VLMRunMetrics) async -> Void
     ) async throws -> String {
+        #if targetEnvironment(simulator)
+        throw LocalVLMError.simulatorUnsupported
+        #else
         Self.log("streamImage start, imageDataBytes=\(imageData.count), idiom=\(userInterfaceIdiom.rawValue)")
+        try ensureRunAllowed()
         let modelContainer = try await resolveModelContainer(onLoadProgress: onLoadProgress)
+        try ensureRunAllowed()
         Self.log("model container ready")
         let preparedImage: (image: UserInput.Image, info: ImageSizingInfo) = try autoreleasepool {
             guard let image = UIImage(data: imageData) else {
@@ -159,7 +185,10 @@ actor LocalVLMService {
                 userInterfaceIdiom: userInterfaceIdiom
             )
         }
+        try ensureRunAllowed()
         let session = ChatSession(modelContainer, processing: .init(resize: nil))
+        activeSession = session
+        cancelledSession = nil
         print(
             "VL input image size: original \(preparedImage.info.originalWidth)x\(preparedImage.info.originalHeight), "
                 + "effective \(preparedImage.info.effectiveWidth)x\(preparedImage.info.effectiveHeight)"
@@ -177,6 +206,7 @@ actor LocalVLMService {
                 images: [preparedImage.image],
                 videos: []
             ) {
+                try ensureRunAllowed()
                 if let chunk = generation.chunk {
                     output += chunk
                     print(chunk, terminator: "")
@@ -199,19 +229,51 @@ actor LocalVLMService {
                     )
                 }
             }
-            await session.clear()
-            Memory.clearCache()
+            if cancelledSession === session {
+                cancelledSession = nil
+                await finishActiveSession(session, synchronize: false)
+                Self.log("streamImage cancelled after stream termination")
+                throw CancellationError()
+            }
+            await finishActiveSession(session)
             Self.log("session cleared, MLX cache cleared")
             print("")
             let finalOutput = Self.augmentedOutput(from: output)
             Self.log("streamImage completed, rawOutputChars=\(output.count), finalOutputChars=\(finalOutput.count)")
             return finalOutput
+        } catch is CancellationError {
+            if cancelledSession === session {
+                cancelledSession = nil
+            }
+            await finishActiveSession(session, synchronize: false)
+            Self.log("streamImage cancelled")
+            throw CancellationError()
         } catch {
-            await session.clear()
-            Memory.clearCache()
+            if cancelledSession === session {
+                cancelledSession = nil
+            }
+            await finishActiveSession(session)
             Self.log("streamImage failed: \(error.localizedDescription)")
             throw error
         }
+        #endif
+    }
+
+    func cancelActiveRun() async {
+        await cancelActiveRun(synchronizeCleanup: isApplicationActive)
+    }
+
+    private func cancelActiveRun(synchronizeCleanup: Bool) async {
+        if let modelContainerTask {
+            modelContainerTask.cancel()
+            self.modelContainerTask = nil
+            Self.log("cancelled in-flight model container task")
+        }
+        guard let activeSession else { return }
+        cancelledSession = activeSession
+        await activeSession.cancel()
+        await finishActiveSession(activeSession, synchronize: synchronizeCleanup)
+        Self.log("cancelActiveRun completed")
     }
 
     private func resolveModelContainer(
@@ -254,6 +316,25 @@ actor LocalVLMService {
             self.modelContainerTask = nil
             Self.log("model container load failed: \(error.localizedDescription)")
             throw error
+        }
+    }
+
+    private func ensureRunAllowed() throws {
+        try Task.checkCancellation()
+        guard isApplicationActive else {
+            Self.log("rejecting VLM work while application is inactive")
+            throw CancellationError()
+        }
+    }
+
+    private func finishActiveSession(_ session: ChatSession, synchronize: Bool? = nil) async {
+        await session.clear()
+        Memory.clearCache()
+        if synchronize ?? isApplicationActive {
+            Stream().synchronize()
+        }
+        if activeSession === session {
+            activeSession = nil
         }
     }
 

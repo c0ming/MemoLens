@@ -31,6 +31,7 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
         title = "VL 测试"
         Self.log("viewDidLoad")
         configureUI()
+        configureSimulatorPreviewIfNeeded()
     }
 
     private func configureUI() {
@@ -144,8 +145,29 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
         }
     }
 
+    private func configureSimulatorPreviewIfNeeded() {
+        #if targetEnvironment(simulator)
+        subtitleLabel.text = "模拟器只用于调试 UI 和 widget 样式，本地 VL 推理请用真机验证。当前已载入内置测试图。"
+        runButton.configuration?.title = "模拟器不支持本地 VL"
+        runButton.isEnabled = false
+        runButton.alpha = 0.7
+        imageView.isUserInteractionEnabled = false
+        placeholderLabel.isHidden = true
+        if let url = Bundle.main.url(forResource: "VLTestInput", withExtension: "jpg"),
+           let image = UIImage(contentsOfFile: url.path) {
+            imageView.image = image
+            selectedOriginalPixelSize = CGSize(width: image.size.width, height: image.size.height)
+        }
+        statusLabel.text = "模拟器模式：已载入测试图，可继续调试 widget 和页面样式。"
+        #endif
+    }
+
     @objc
     private func selectPhoto() {
+        #if targetEnvironment(simulator)
+        statusLabel.text = "模拟器模式下不走本地相册选图。"
+        return
+        #endif
         Self.log("selectPhoto tapped")
         Task { [weak self] in
             guard let self else { return }
@@ -167,6 +189,11 @@ class LocalVLMTestViewController: UIViewController, PHPickerViewControllerDelega
 
     @objc
     private func runVLTest() {
+        #if targetEnvironment(simulator)
+        statusLabel.text = "模拟器不支持本地 VL 推理，请用真机测试。"
+        outputView.text = LocalVLMError.simulatorUnsupported.localizedDescription
+        return
+        #endif
         guard let selectedImage = imageView.image else {
             statusLabel.text = "请先从系统相册选择一张照片。"
             Self.log("runVLTest aborted, no selected image")

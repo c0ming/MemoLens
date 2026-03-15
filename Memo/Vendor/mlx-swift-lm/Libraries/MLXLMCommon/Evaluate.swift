@@ -606,9 +606,11 @@ private func runSynchronousGenerationLoop(
 
     // TokenIterator uses `asyncEval()` to keep the pipeline full. If the caller
     // exits the program right away, those tasks will still be executing and will
-    // hit assertions as the mlx scheduler is torn down. Synchronize with the stream
-    // to make sure it is complete.
-    Stream().synchronize()
+    // hit assertions as the mlx scheduler is torn down. Skip the final sync when
+    // generation was cancelled so a background transition does not force more GPU work.
+    if stopReason != .cancelled {
+        Stream().synchronize()
+    }
 
     return SynchronousGenerationLoopResult(
         generatedTokens: generatedTokens,
@@ -1070,8 +1072,11 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
             )
             _ = continuation.yield(handler.infoEvent(info))
 
-            // Synchronize with the stream to ensure tasks are completed
-            Stream().synchronize()
+            // Skip the final sync when generation was cancelled so a background
+            // transition does not force more GPU work.
+            if stopReason != .cancelled {
+                Stream().synchronize()
+            }
 
             // Finalize the stream
             continuation.finish()

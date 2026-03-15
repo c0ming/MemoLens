@@ -9,6 +9,12 @@ final class HomeViewController: UIViewController {
         static let progressAnimationDuration: TimeInterval = 0.28
         static let progressAnimationOffset: CGFloat = 10
         static let analysisStartDelayNanoseconds: UInt64 = 3_000_000_000
+        static let preferredItemWidth: CGFloat = 118
+        static let minimumItemWidth: CGFloat = 92
+        static let minimumCompactColumns = 3
+        static let minimumRegularColumns = 4
+        static let maximumPhoneColumns = 4
+        static let maximumPadColumns = 7
     }
 
     private let scrollContainerView = UIView()
@@ -223,6 +229,8 @@ final class HomeViewController: UIViewController {
         collectionView.isHidden = !hasAccess
 
         if hasAccess {
+            view.layoutIfNeeded()
+            updateItemSize()
             updateProgress()
             collectionView.reloadData()
             scheduleDelayedAnalysisStartIfNeeded()
@@ -258,8 +266,32 @@ final class HomeViewController: UIViewController {
         }
 
         let horizontalInsets = collectionView.contentInset.left + collectionView.contentInset.right
-        let availableWidth = collectionView.bounds.width - horizontalInsets - Layout.spacing * 2
-        let itemWidth = floor(availableWidth / 3)
+        let availableWidth = collectionView.bounds.width - horizontalInsets
+        guard availableWidth > 0 else { return }
+
+        let minimumColumns = traitCollection.horizontalSizeClass == .regular
+            ? Layout.minimumRegularColumns
+            : Layout.minimumCompactColumns
+        let maximumColumns = traitCollection.userInterfaceIdiom == .pad
+            ? Layout.maximumPadColumns
+            : Layout.maximumPhoneColumns
+
+        var columnCount = Int((availableWidth + Layout.spacing) / (Layout.preferredItemWidth + Layout.spacing))
+        columnCount = max(columnCount, minimumColumns)
+        columnCount = min(columnCount, maximumColumns)
+
+        while columnCount > minimumColumns {
+            let candidateWidth = floor(
+                (availableWidth - Layout.spacing * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+            )
+            if candidateWidth >= Layout.minimumItemWidth {
+                break
+            }
+            columnCount -= 1
+        }
+
+        let totalSpacing = Layout.spacing * CGFloat(max(columnCount - 1, 0))
+        let itemWidth = floor((availableWidth - totalSpacing) / CGFloat(columnCount))
         if itemWidth > 0, layout.itemSize.width != itemWidth {
             layout.itemSize = CGSize(width: itemWidth, height: itemWidth)
             layout.invalidateLayout()
@@ -363,6 +395,12 @@ private extension HomeViewController {
         guard libraryService.hasFullAccess else { return }
         guard !hasTriggeredAnalysisStart else { return }
         guard delayedAnalysisStartTask == nil else { return }
+
+        #if targetEnvironment(simulator)
+        analysisCoordinator.setProcessingEnabled(false)
+        updateProgress()
+        return
+        #endif
 
         analysisCoordinator.start()
         delayedAnalysisStartTask = Task { [weak self] in

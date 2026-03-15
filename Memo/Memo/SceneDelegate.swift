@@ -27,9 +27,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         PhotoAnalysisCoordinator.shared.sceneDidBecomeActive()
+        #if !targetEnvironment(simulator)
+        Task {
+            await LocalVLMService.shared.applicationDidBecomeActive()
+        }
+        #endif
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        PhotoAnalysisCoordinator.shared.sceneWillResignActive()
+        synchronouslyFreezeVLMForBackground()
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
@@ -38,5 +45,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidEnterBackground(_ scene: UIScene) {
         PhotoAnalysisCoordinator.shared.sceneDidEnterBackground()
+        synchronouslyFreezeVLMForBackground()
+    }
+
+    private func synchronouslyFreezeVLMForBackground() {
+        #if targetEnvironment(simulator)
+        return
+        #else
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            await LocalVLMService.shared.applicationWillResignActive()
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 0.35)
+        #endif
     }
 }

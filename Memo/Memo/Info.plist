@@ -2,8 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Memo 需要读取系统相册中的照片，用于你手动选择图片后做本地视觉分析。</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
